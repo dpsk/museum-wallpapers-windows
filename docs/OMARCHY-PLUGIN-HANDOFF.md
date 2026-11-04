@@ -1,6 +1,6 @@
-# Handoff: bring the Windows 0.1.2 speed-ups to the Omarchy plugin
+# Handoff: bring the Windows 0.1.2–0.1.3 speed-ups to the Omarchy plugin
 
-Goal: [omarchy-museum-wallpapers](https://github.com/dpsk/omarchy-museum-wallpapers)
+Goal (sections 1–8 from 0.1.2, section 9 from 0.1.3): [omarchy-museum-wallpapers](https://github.com/dpsk/omarchy-museum-wallpapers)
 (0.1.1) and this Windows app should behave the same. The Windows app forked
 the plugin's `museum.py` as `src/museum_wallpapers/core.py`; version 0.1.2
 changed the core to make **Next** fast. Port those changes back to
@@ -128,6 +128,41 @@ whose Wikidata item has no date and no English label:
 
 Tests: `test_long_object_names_end_on_a_word`,
 `test_scan_dates_are_not_painting_years`.
+
+### 9. Built-in painter lists (Windows 0.1.3)
+
+The first run waited ~60 s for Wikidata: `famous_painters(60)` is a ~28 s
+query, the pool of their paintings another 9–20 s (both measured
+2026-11-04: 282 painters / 38 390 paintings for 60+ sitelinks, 1200 /
+94 079 for 30+). The Windows app now ships them and refreshes behind the
+user's back:
+
+- `painter_ids(level)` (the old query), `query_pool(filters)` (the SPARQL
+  part of `_load_pool`), `build_fame_bundle(level)` →
+  `{"at", "level", "painters", "items"}`.
+- `fame_bundle(level)`: `cache/pools/fame-<level>.json` if valid (parsed once,
+  re-read when its mtime changes); refresh in a daemon thread when it is
+  older than `POOL_MAX_AGE`; else the built-in `SEED/fame-<level>.json.gz` and
+  a refresh; else build it inline under `pools/.fame-<level>.lock`.
+  `refresh_fame_in_background`: one thread per level, `lock(..., wait=False)`
+  across processes, `REFRESH_RETRY = 600` s after a failure.
+- `famous_painters(level)` = `fame_bundle(level)["painters"]`;
+  `fetch_next` sets `filters["fameLevel"]`, and adds `fameArtists` only when
+  other filters are set (`fame_only()`); `entity_pool` returns the bundle's
+  items for `fame_only` filters; `has_entity_filters` counts `fameLevel`.
+- `write_json(..., compact=True)` for pools.
+- Packaging: `packaging/seed.py` (standard library; refuses fewer than 100
+  painters or 10 000 paintings, 4 attempts 30 s apart). For the plugin: the
+  seed can live in the repo (`seed/fame-60.json.gz`, `seed/fame-30.json.gz`,
+  ~3 MB) refreshed by a scheduled GitHub Action, or be fetched on install;
+  `SEED` points there. In the plugin, CLI calls are short-lived processes
+  (systemd timer), so the daemon thread dies with them: run the refresh as a
+  detached `museum.py refresh-pools` process instead of a thread.
+
+The exact core diff (0.1.2 → 0.1.3) is `docs/omarchy-port-0.1.3.diff`.
+
+Tests: `FameBundleTest` in `tests/test_core.py` and
+`test_seed_script_*` in `tests/test_layer.py`.
 
 ## Skip (Windows only)
 
