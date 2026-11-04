@@ -24,7 +24,9 @@ a = Analysis(
     [str(HERE / "launcher.py")],
     pathex=[str(ROOT / "src")],
     binaries=collect_dynamic_libs("winrt"),
-    datas=[(str(BUILD / "icon.ico"), ".")],
+    # The built-in painter lists and pools (packaging/seed.py), next to core.py.
+    datas=[(str(BUILD / "icon.ico"), ".")]
+    + ([(str(BUILD / "seed"), "museum_wallpapers/seed")] if (BUILD / "seed").is_dir() else []),
     hiddenimports=hiddenimports,
     excludes=["pytest"],
     noarchive=False,

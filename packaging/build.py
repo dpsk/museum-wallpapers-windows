@@ -3,7 +3,8 @@
     python packaging/build.py              # app folder + self-test + installer
     python packaging/build.py --no-installer
 
-Steps: icon.ico and version info from the package, PyInstaller one-folder
+Steps: the built-in painter lists and painting pools (packaging/seed.py,
+needs Wikidata), icon.ico and version info from the package, PyInstaller one-folder
 build into dist/MuseumWallpapers, the frozen app's own `selftest` (catches
 modules PyInstaller missed), Inno Setup into
 dist/MuseumWallpapers-Setup-<version>.exe, and the Microsoft Store package
@@ -96,6 +97,8 @@ def main():
     parser.add_argument("--no-installer", action="store_true")
     parser.add_argument("--no-msix", action="store_true")
     parser.add_argument("--no-selftest", action="store_true")
+    parser.add_argument("--no-seed", action="store_true",
+                        help="reuse packaging/build/seed as it is (the app then starts from it, or from Wikidata)")
     args = parser.parse_args()
     if sys.platform != "win32":
         sys.exit("PyInstaller does not cross-compile: build on Windows (or let GitHub Actions do it).")
@@ -105,6 +108,8 @@ def main():
     from museum_wallpapers import resources
     resources.write_ico(BUILD / "icon.ico")
     (BUILD / "version_info.txt").write_text(version_info(ver), encoding="utf-8")
+    if not args.no_seed:
+        subprocess.run([sys.executable, str(HERE / "seed.py"), "--out", str(BUILD / "seed")], check=True)
 
     subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--distpath", str(DIST),
                     "--workpath", str(BUILD / "pyinstaller"), str(HERE / "MuseumWallpapers.spec")], check=True)
