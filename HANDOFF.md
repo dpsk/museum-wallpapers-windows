@@ -24,6 +24,14 @@ selftest` found every module (comtypes, windows_toasts/winrt, pystray._win32,
 tkinter, PIL.ImageTk) and passed all checks; Inno Setup compiled a 15 MB
 installer.
 
+### 0.1.2 — faster Next, caption fix
+
+Standard thumbnail widths, 6 paintings ready and downloaded two at a time,
+framed ahead, waiting for an in-flight download instead of a second one,
+parallel `describe`, stage timings in the log, caption text cleanup and font
+fallback. **To be ported to the Omarchy plugin:**
+[docs/OMARCHY-PLUGIN-HANDOFF.md](docs/OMARCHY-PLUGIN-HANDOFF.md).
+
 ### Microsoft Store (0.1.1)
 
 - Product reserved in Partner Center: **Museum Wallpapers**, Store ID

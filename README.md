@@ -66,7 +66,7 @@ All of these are in the tray menu; they are stored in
 | `language` | `"auto"` | Language | Wikipedia language for titles and stories; `auto` follows Windows |
 | `notifyOnChange` | `false` | Notify when it changes | A notification with the painting each time it changes |
 | `saveDir` | `Pictures\Museum Wallpapers` | Open collection folder | Where **Save** puts paintings; also the offline fallback |
-| `prefetchCount` | `3` | | Paintings downloaded ahead, so **Next** is instant |
+| `prefetchCount` | `6` | | Paintings downloaded (and framed) ahead, so **Next** is instant |
 | `cacheSize` | `24` | | Downloaded paintings kept |
 | `minRatio`, `maxRatio` | `1.3`, `2.0` | | Accepted width/height ratios |
 | `filters` | none | | `yearFrom`, `yearTo`, `artists`, `movements`, `genres`; see the [plugin's README](https://github.com/dpsk/omarchy-museum-wallpapers#filters) |

@@ -1,6 +1,20 @@
 # Changelog
 
-## 0.1.1 — unreleased
+## 0.1.2 — unreleased
+
+- Faster Next: 6 paintings kept ready (was 3), downloaded two at a time, each
+  framed for the screens while it waits, so a switch only sets the wallpaper.
+- Thumbnails are requested at Wikimedia's standard widths (1280, 1920, 3840),
+  which its CDN keeps ready; other widths were rendered on demand and rate
+  limited.
+- A Next with the queue empty waits for the download already under way
+  instead of starting another one; painting details are fetched in parallel.
+- The caption no longer shows boxes for unusual spaces and invisible
+  characters in titles, and switches to a font that has the script (Chinese,
+  Japanese, Korean, Indic, Thai) when Georgia does not.
+- The log (`state\museum-wallpapers.log`) records how long each stage took.
+
+## 0.1.1 — 2026-11-04
 
 - Microsoft Store package (MSIX): installs without the SmartScreen warning.
   In the Store build, Start with Windows is the package's startup task
