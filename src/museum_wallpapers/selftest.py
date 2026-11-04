@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import VERSION
 
-REQUIRED = ["PIL.Image", "PIL.ImageFilter", "pystray", "tkinter", "PIL.ImageTk"]
+REQUIRED = ["PIL.Image", "PIL.ImageFilter", "pystray", "tkinter", "PIL.ImageTk", "fontTools.ttLib"]
 WINDOWS_REQUIRED = ["comtypes", "windows_toasts", "pystray._win32", "winreg",
                     "winrt.windows.applicationmodel", "winrt.windows.applicationmodel.activation"]
 

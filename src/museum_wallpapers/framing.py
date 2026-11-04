@@ -2,8 +2,10 @@
 itself, on a dark wall, or filling the screen, optionally with a museum-style
 caption (italic title, byline, museum) drawn into a corner."""
 
+import functools
 import os
 import threading
+import unicodedata
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
@@ -54,6 +56,64 @@ def compose(image, fit, size):
     return canvas
 
 
+def clean_text(text):
+    """Text as a caption can draw it: compatibility forms folded (NFKC), every
+    kind of space a plain space, invisible format characters (zero-width
+    spaces, soft hyphens, direction marks) and control characters dropped."""
+    text = unicodedata.normalize("NFKC", text or "")
+    out = []
+    for char in text:
+        category = unicodedata.category(char)
+        if category in ("Cf", "Cc", "Co", "Cs", "Cn"):
+            continue
+        out.append(" " if category.startswith("Z") else char)
+    return " ".join("".join(out).split())
+
+
+@functools.lru_cache(maxsize=32)
+def _coverage(path):
+    """The characters a font file has glyphs for; None when unknown."""
+    if not path:
+        return None
+    try:
+        from fontTools.ttLib import TTFont
+        with TTFont(str(path), fontNumber=0, lazy=True) as font:
+            return frozenset(font.getBestCmap() or {})
+    except Exception:  # noqa: BLE001 - not readable: assume it covers everything
+        return None
+
+
+def missing(path, text):
+    """How many characters of `text` the font has no glyph for."""
+    covered = _coverage(path)
+    if covered is None:
+        return 0
+    return sum(1 for char in set(text) if not char.isspace() and ord(char) not in covered)
+
+
+def pick_font(paths, text):
+    """The first font that can draw all of `text` (else the one missing the
+    fewest characters), so a Chinese or Georgian title does not turn into
+    boxes in a Latin-only font."""
+    paths = [p for p in paths if p] or [None]
+    best, best_missing = paths[0], None
+    for path in paths:
+        count = missing(path, text)
+        if count == 0:
+            return path
+        if best_missing is None or count < best_missing:
+            best, best_missing = path, count
+    return best
+
+
+def drawable(path, text):
+    """`text` without the characters the font cannot draw (boxes otherwise)."""
+    covered = _coverage(path)
+    if covered is None:
+        return text
+    return " ".join("".join(c for c in text if c.isspace() or ord(c) in covered).split())
+
+
 def _font(path, size):
     if path:
         try:
@@ -92,15 +152,22 @@ def _wrap(draw, text, font, max_width, max_lines):
 
 def draw_caption(canvas, caption, corner="bottom-right", inset=(0, 0, 0, 0), fonts=(None, None)):
     """A small translucent label with the title (italic), the byline and the
-    museum in a corner, clear of the taskbar (`inset`)."""
-    title = (caption.get("title") or "").strip()
+    museum in a corner, clear of the taskbar (`inset`). `fonts` is (title
+    font, body font, *fallbacks for scripts those two lack)."""
+    title = clean_text(caption.get("title"))
     if not title or corner not in CORNERS:
         return canvas
-    lines_below = [(caption.get(key) or "").strip() for key in ("byline", "museum")]
+    lines_below = [clean_text(caption.get(key)) for key in ("byline", "museum")]
     width, height = canvas.size
     unit = min(width / 3840, height / 2160) * 2
-    title_font = _font(fonts[0], max(14, round(21 * unit)))
-    body_font = _font(fonts[1], max(11, round(14 * unit)))
+    fallbacks = list(fonts[2:])
+    title_path = pick_font([fonts[0], fonts[1], *fallbacks], title)
+    body_path = pick_font([fonts[1], *fallbacks], " ".join(lines_below))
+    title, lines_below = drawable(title_path, title), [drawable(body_path, text) for text in lines_below]
+    if not title:
+        return canvas
+    title_font = _font(title_path, max(14, round(21 * unit)))
+    body_font = _font(body_path, max(11, round(14 * unit)))
     pad, gap, margin = round(14 * unit), round(5 * unit), round(22 * unit)
     max_text = int(width * 0.3)
 

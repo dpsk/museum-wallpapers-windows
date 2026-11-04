@@ -23,6 +23,7 @@ Settings live in settings.json in the app's config folder
 """
 
 import argparse
+import contextlib
 import gzip
 import hashlib
 import html
@@ -38,6 +39,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import REPO_URL, VERSION, filelock, framing, platforms, strings
@@ -55,6 +57,11 @@ PAINTING = "Q3305213"
 RANDOM_SEARCH = 'intitle:"Google Art Project" filew:>{width} filetype:bitmap'
 # Commons serves thumbnails up to this width; larger requests are capped.
 MAX_THUMB_WIDTH = 3840
+# Thumbnail widths Wikimedia's CDN keeps ready ($wgThumbnailSteps, the large
+# end); other widths are rendered on demand, slowly, and rate limited.
+THUMB_STEPS = (1280, 1920, 3840)
+# Paintings downloaded at the same time while the queue fills.
+PREFETCH_WORKERS = 2
 # Commons also hosts tiles cut from very large scans, e.g. "…-x0-y2.jpg".
 TILE_RE = re.compile(r"-x\d+-y\d+\.\w+$", re.IGNORECASE)
 POOL_MAX_AGE = 7 * 24 * 3600
@@ -91,7 +98,7 @@ DEFAULTS = {
     "caption": "bottom-right",
     "saveDir": str(Path(_PATHS["pictures"]) / "Museum Wallpapers"),
     "cacheSize": 24,
-    "prefetchCount": 3,
+    "prefetchCount": 6,
     "fit": "blur",
     "fame": "famous",
     "minRatio": 1.3,
@@ -303,6 +310,17 @@ def queue_key(config):
 def has_entity_filters(filters):
     """Filters that need the Wikidata pool rather than random Commons scans."""
     return bool(filters["artists"] or filters["movements"] or filters["genres"] or filters.get("fameArtists"))
+
+
+@contextlib.contextmanager
+def timed(stage):
+    """Log how long a stage took (the app's log file), to see what is slow."""
+    start = time.monotonic()
+    try:
+        yield
+    finally:
+        print(f"museum-wallpapers: timing {stage}: {time.monotonic() - start:.2f}s "
+              f"[{threading.current_thread().name}]", file=sys.stderr)
 
 
 # ----------------------------------------------------------------- network
@@ -698,12 +716,23 @@ def describe(page, qid, language):
     collections = claim_ids(painting, "P195")
     movements = claim_ids(painting, "P135")
     genres = claim_ids(painting, "P136")
-    related = entities(creators[:1] + collections[:1] + genres[:1], props="labels|claims|sitelinks",
-                       languages=languages, site=sites)
+    # The rest depends only on the painting's item: fetched side by side.
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="describe") as pool:
+        related_job = pool.submit(entities, creators[:1] + collections[:1] + genres[:1],
+                                  props="labels|claims|sitelinks", languages=languages, site=sites)
+        movement_job = pool.submit(entities, movements[:1], props="labels", languages=languages) \
+            if movements else None
+        own_article = article(painting, language)
+        summary_job = pool.submit(_summary, own_article) if own_article else None
+        related = related_job.result()
+        movement = movement_job.result().get(movements[0], {}) if movement_job else {}
+        own_summary = summary_job.result() if summary_job else ("", None)
     artist = related.get(creators[0], {}) if creators else {}
     if not movements and artist:
+        # Movements are tagged on artists far more often than on paintings.
         movements = claim_ids(artist, "P135")
-    movement = entities(movements[:1], props="labels", languages=languages).get(movements[0], {}) if movements else {}
+        movement = entities(movements[:1], props="labels", languages=languages).get(movements[0], {}) \
+            if movements else {}
 
     year = claim_year(painting)
     info = {
@@ -726,57 +755,109 @@ def describe(page, qid, language):
 
     # Best first: the painting's own article, the Commons description, then
     # a few lines about the artist.
-    sources = [("article", painting, ""), ("commons", None, ""), ("article", artist, "About the artist: ")]
-    for kind, entity, prefix in sources:
-        if kind == "commons":
-            info["summary"] = commons_description(meta.get("ImageDescription", {}).get("value"))
-        else:
-            found = article(entity, language)
-            if not found:
-                continue
-            try:
-                summary, url = wikipedia_summary(*found)
-            except (OSError, ValueError):
-                continue
-            if summary:
-                info["summary"] = prefix + summary
-                info["url"] = url or info["url"]
-        if info["summary"]:
-            break
+    summary, url = own_summary
+    if summary:
+        info["summary"], info["url"] = summary, url or info["url"]
+    else:
+        info["summary"] = commons_description(meta.get("ImageDescription", {}).get("value"))
+    if not info["summary"]:
+        summary, url = _summary(article(artist, language))
+        if summary:
+            info["summary"], info["url"] = "About the artist: " + summary, url or info["url"]
     return info
 
 
+def _summary(found):
+    """(summary, url) of a Wikipedia article, or ("", None)."""
+    if not found:
+        return "", None
+    try:
+        return wikipedia_summary(*found)
+    except (OSError, ValueError):
+        return "", None
+
+
+def thumb_width(screen_width):
+    """The thumbnail width to ask Commons for: the smallest standard step that
+    fills the screen (wider than the original, Commons serves the original)."""
+    target = min(screen_width, MAX_THUMB_WIDTH) * 0.95
+    return next((step for step in THUMB_STEPS if step >= target), THUMB_STEPS[-1])
+
+
+def claim(name, key, allow_shown=False):
+    """Reserve a painting for one download, so parallel downloads (and other
+    processes) never take the same one: "claimed", or why not ("queued" when
+    it is queued or being downloaded, "shown" when shown recently)."""
+    with lock(".claim.lock"):
+        if (QUEUE / f"{name}.json").exists() or (QUEUE / f"{name}.jpg").exists():
+            return "queued"
+        if not allow_shown and (CACHE / f"{name}.jpg").exists():
+            return "shown"
+        # The queue lists only *.jpg; a sidecar alone marks a download in flight.
+        write_json(QUEUE / f"{name}.json", {"filter": key, "claimedBy": os.getpid()})
+        return "claimed"
+
+
+IN_FLIGHT_AGE = 120
+
+
+def in_flight(key):
+    """Downloads under way for this queue key (claimed, image not there yet):
+    this process's, or another process's from the last two minutes (a claim
+    left by a process that was killed must not hold anything up)."""
+    if not QUEUE.exists():
+        return 0
+    count = 0
+    for sidecar in QUEUE.glob("*.json"):
+        try:
+            age = time.time() - sidecar.stat().st_mtime
+        except OSError:
+            continue
+        if sidecar.with_suffix(".jpg").exists():
+            continue
+        data = read_json(sidecar, {})
+        if data.get("filter") == key and (data.get("claimedBy") == os.getpid() or age < IN_FLIGHT_AGE):
+            count += 1
+    return count
+
+
 def enqueue(page, qid, config, key, note=None):
-    """Put one painting into the queue; returns its path, or None to skip it.
-    `note` explains a random painting queued because the filter failed."""
+    """Download a claimed painting into the queue; returns its path, or None
+    to skip it (the claim is dropped). `note` explains a random painting
+    queued because the filter failed."""
     name = f"commons-{page['pageid']}"
     QUEUE.mkdir(parents=True, exist_ok=True)
     dest = QUEUE / f"{name}.jpg"
-    cached = CACHE / f"{name}.jpg"
-    info = read_json(cached.with_suffix(".json")) if cached.exists() else None
-    thumb = None
-    if info and info.get("language") != config["language"]:
-        info = describe(page, qid, config["language"])
-    if not info:
-        data = mw_api(COMMONS_API, action="query", prop="imageinfo", iiprop="url",
-                      iiurlwidth=min(page["imageinfo"][0]["width"], MAX_THUMB_WIDTH), pageids=page["pageid"])
-        thumb = data["query"]["pages"][0]["imageinfo"][0]
-        # Without a rendered thumbnail the original could be hundreds of MB.
-        if not thumb.get("thumburl"):
-            return None
-        info = describe(page, qid, config["language"])
-    # The sidecar goes first: it claims the painting for this process (see
-    # fetch_next), and the queue only lists *.jpg, so an image whose sidecar
-    # is missing would be taken for a stale one and deleted.
-    info["filter"] = key
-    if note:
-        info["filterError"] = note
-    else:
-        info.pop("filterError", None)
-    write_json(dest.with_suffix(".json"), info)
     try:
+        cached = CACHE / f"{name}.jpg"
+        info = read_json(cached.with_suffix(".json")) if cached.exists() else None
+        thumb = None
+        if info and info.get("language") != config["language"]:
+            with timed("describe"):
+                info = describe(page, qid, config["language"])
+        if not info:
+            with timed("thumbnail url"):
+                data = mw_api(COMMONS_API, action="query", prop="imageinfo", iiprop="url",
+                              iiurlwidth=thumb_width(screen_size()[0]), pageids=page["pageid"])
+            thumb = data["query"]["pages"][0]["imageinfo"][0]
+            # Without a rendered thumbnail the original could be hundreds of MB.
+            if not thumb.get("thumburl"):
+                dest.with_suffix(".json").unlink(missing_ok=True)
+                return None
+            with timed("describe"):
+                info = describe(page, qid, config["language"])
+        info["filter"] = key
+        info["claimedBy"] = os.getpid()
+        if note:
+            info["filterError"] = note
+        else:
+            info.pop("filterError", None)
+        # Replaces the claim; the queue only lists *.jpg, so the sidecar must
+        # exist before the image or the image would be taken for a stale one.
+        write_json(dest.with_suffix(".json"), info)
         if thumb:
-            download(thumb["thumburl"], dest)
+            with timed(f"download {thumb.get('thumbwidth') or '?'}px"):
+                download(thumb["thumburl"], dest)
         else:
             tmp = dest.with_name(f"{dest.name}.{os.getpid()}-{threading.get_ident()}.part")
             shutil.copyfile(cached, tmp)
@@ -802,27 +883,25 @@ def fetch_next(config, unfiltered=False, note=None):
     # An explicit artist (or "More by …") is shown however famous they are.
     if config["fame"] != "any" and not filters["artists"]:
         filters["fameArtists"] = famous_painters(FAME[config["fame"]])
-    # The queue first: a switch moving an image from the queue to the cache
-    # between the two globs then still leaves it in one of them. Sidecars
-    # count, so a painting another process is downloading is not taken twice.
-    queue_claims = {p.stem for p in QUEUE.glob("*.json")} | {p.stem for p in QUEUE.glob("*.jpg")}
-    shown = {p.stem for p in CACHE.glob("*.jpg")}
-    seen = queue_claims | shown
+    QUEUE.mkdir(parents=True, exist_ok=True)
     current = current_painting()
     repeats, current_matched, queued_matched = [], False, False
     for _ in range(SEARCH_ROUNDS):
-        if has_entity_filters(filters):
-            found = filtered_candidates(filters, config, screen)
-            exhaustive = len(entity_pool(filters)) <= POOL_SAMPLE
-        else:
-            found = random_candidates(filters, config, screen)
-            exhaustive = False
+        with timed("search"):
+            if has_entity_filters(filters):
+                found = filtered_candidates(filters, config, screen)
+                exhaustive = len(entity_pool(filters)) <= POOL_SAMPLE
+            else:
+                found = random_candidates(filters, config, screen)
+                exhaustive = False
         for page, qid in found:
             name = f"commons-{page['pageid']}"
-            if name in seen:
-                if name in queue_claims:
-                    queued_matched = True
-                elif current and current.stem == name:
+            state = claim(name, key)
+            if state == "queued":
+                queued_matched = True
+                continue
+            if state == "shown":
+                if current and current.stem == name:
                     current_matched = True
                 else:
                     repeats.append((page, qid))
@@ -836,6 +915,9 @@ def fetch_next(config, unfiltered=False, note=None):
     # but never one that is still waiting in the queue.
     random.shuffle(repeats)
     for page, qid in repeats:
+        if claim(f"commons-{page['pageid']}", key, allow_shown=True) != "claimed":
+            queued_matched = True
+            continue
         dest = enqueue(page, qid, config, key, note)
         if dest:
             return dest
@@ -937,8 +1019,12 @@ def render(original, config, monitor=None):
         corner = config["caption"] if caption else "none"
         inset = "-".join(str(x) for x in monitor.inset) if caption else "0"
         name = f"{original.stem}.{config['fit']}.{corner}.{monitor.width}x{monitor.height}.{inset}.jpg"
-        return framing.frame(original, DISPLAY / name, fit, screen, caption, config["caption"], monitor.inset,
-                             PLATFORM.caption_fonts())
+        out = DISPLAY / name
+        if out.exists():
+            return out  # framed ahead by the prefetcher, for these very settings
+        with timed("frame"):
+            return framing.frame(original, out, fit, screen, caption, config["caption"], monitor.inset,
+                                 PLATFORM.caption_fonts())
     except Exception as exc:  # noqa: BLE001 - a broken image must not stop the rotation
         print(f"museum-wallpapers: could not frame {original.name}: {exc}", file=sys.stderr)
         return original
@@ -999,7 +1085,7 @@ def local_credit(image):
 
 
 def info_for(image, config):
-    sidecar = read_json(image.with_suffix(".json")) if image.parent == CACHE else None
+    sidecar = read_json(image.with_suffix(".json")) if image.parent in (CACHE, QUEUE) else None
     if sidecar:
         return sidecar
     saved = saved_index(config).get(image.name)
@@ -1039,9 +1125,10 @@ def prune(config):
             _unlink(image.with_suffix(".json"))
     # Framed copies of the painting on screen stay (one per monitor size);
     # Windows keeps the file it shows open, so a failed delete is retried later.
-    keep_stem = current.stem if current else None
+    keep = {current.stem} if current else set()
+    keep |= {image.stem for image in QUEUE.glob("*.jpg")} if QUEUE.exists() else set()
     for framed in DISPLAY.glob("*.jpg") if DISPLAY.exists() else []:
-        if framed != shown and framed.name.split(".")[0] != keep_stem:
+        if framed != shown and framed.name.split(".")[0] not in keep:
             _unlink(framed)
     # Pools whose filter or painter list changed are never read again.
     pools = CACHE / "pools"
@@ -1161,10 +1248,10 @@ def lock(name=".lock", wait=True):
 
     `.lock` guards switching and the queue's contents and is held only
     briefly. `.prefetcher.lock` keeps a single process filling the queue.
-    `.download.lock` is held around each fetch, by the prefetcher and by a
-    switch that finds the queue empty, so two processes never pick the same
-    painting; a switch waits for at most one download, and for none while the
-    queue has an image. The locks exclude threads of the tray app as well as
+    `.claim.lock` is held only while a painting is reserved for a download
+    (a sidecar without its image), so parallel downloads, in threads or
+    processes, never pick the same painting; a switch that finds the queue
+    empty waits for a download in flight rather than starting its own. The locks exclude threads of the tray app as well as
     other processes (a command line run beside it).
     `.save.lock` serializes Save, `.settings.lock` settings.json edits."""
     return filelock.acquire(CACHE / name, wait=wait)
@@ -1175,35 +1262,25 @@ def switch(config):
     for network or Wikimedia trouble: every failure is recorded, so the
     minute tick does not retry until the next interval."""
     error, error_kind = "", ""
-    image = queued(config)
-    downloader = None
+    image = queued(config) or wait_for_download(config)
     if not image:
-        # Never download beside the prefetcher: wait for the painting it is
-        # fetching, or fetch while holding its lock, so both cannot pick the
-        # same painting.
-        downloader = lock(".download.lock")
-        image = queued(config)
-    try:
-        if not image:
-            try:
+        try:
+            with timed("fetch on demand (queue empty)"):
                 image = fetch_next(config)
-            except (OnlyCurrent, AllQueued):
-                # Nothing to change to yet; keep it without an error until the next interval.
-                record_current(config)
-                return ""
-            except NoMatch as exc:
-                error, error_kind = f"Filter: {exc}; showing a random painting", "filter"
-                try:
-                    image = fetch_next(config, unfiltered=True)
-                except NoMatch as inner:
-                    error = f"Filter: {exc}; and no other painting either: {inner}"
-                except Exception as inner:  # noqa: BLE001 - any failure falls back below
-                    error, error_kind = f"Filter: {exc}; and could not reach Wikimedia: {inner}", "network"
-            except Exception as exc:  # noqa: BLE001 - truncated reads, HTTP errors, bad JSON
-                error, error_kind = f"Could not reach Wikimedia: {exc}", "network"
-    finally:
-        if downloader:
-            downloader.close()
+        except (OnlyCurrent, AllQueued):
+            # Nothing to change to yet; keep it without an error until the next interval.
+            record_current(config)
+            return ""
+        except NoMatch as exc:
+            error, error_kind = f"Filter: {exc}; showing a random painting", "filter"
+            try:
+                image = fetch_next(config, unfiltered=True)
+            except NoMatch as inner:
+                error = f"Filter: {exc}; and no other painting either: {inner}"
+            except Exception as inner:  # noqa: BLE001 - any failure falls back below
+                error, error_kind = f"Filter: {exc}; and could not reach Wikimedia: {inner}", "network"
+        except Exception as exc:  # noqa: BLE001 - truncated reads, HTTP errors, bad JSON
+            error, error_kind = f"Could not reach Wikimedia: {exc}", "network"
     report(error, error_kind)
     if not image:
         local_fallback(config, error, error_kind)
@@ -1213,7 +1290,8 @@ def switch(config):
         _replace(image.with_suffix(".json"), target.with_suffix(".json"))
         _replace(image, target)
         os.utime(target)
-        shown = show(target, config)
+        with timed("show"):
+            shown = show(target, config)
     except Exception as exc:  # noqa: BLE001 - OSError, or a COM error from the wallpaper API
         error, error_kind = f"Could not set the background: {exc}", "background"
         report(error, error_kind)
@@ -1230,34 +1308,84 @@ def switch(config):
     return error
 
 
-def prefetch(config):
-    """Fill the queue up to prefetchCount for the active filter. Like a
-    switch, a filter that matches nothing gets random paintings; a failure
-    is stamped so the tick backs off instead of retrying every minute."""
-    stamp = CACHE / ".prefetch-failed.json"
-    for _ in range(config["prefetchCount"] * 2):
-        if len(queue_items(config)) >= config["prefetchCount"]:
+def wait_for_download(config, timeout=60):
+    """With the queue empty but a download for this filter under way (the
+    prefetcher's), waiting for it is faster than starting a new one."""
+    key = queue_key(config)
+    deadline = time.monotonic() + timeout
+    waited = False
+    while in_flight(key) and time.monotonic() < deadline:
+        waited = True
+        time.sleep(0.25)
+        if queue_items(config):
             break
-        # Taken per attempt: a failure under filter A must not hold back
-        # filter B set from the popup while A was downloading.
-        key = queue_key(config)
+    if waited:
+        print("museum-wallpapers: waited for a download in flight", file=sys.stderr)
+    return queued(config) if waited else None
+
+
+def _prefetch_one(config):
+    """One painting into the queue: "ok", "small" (a small pool has nothing
+    more to offer) or "failed"."""
+    try:
         try:
-            try:
-                with lock(".download.lock"):
-                    fetch_next(config)
-            except (OnlyCurrent, AllQueued):
-                # A small pool: all it has is queued or showing. The next
-                # switch prefetches again; the tick need not ask every minute.
-                write_json(stamp, {"at": time.time(), "filter": key, "reason": "small pool"})
-                return
-            except NoMatch as exc:
-                with lock(".download.lock"):
-                    fetch_next(config, unfiltered=True, note=str(exc))
-        except Exception as exc:  # noqa: BLE001 - retried after the backoff
-            print(f"museum-wallpapers: prefetch failed: {exc}", file=sys.stderr)
+            image = fetch_next(config)
+        except (OnlyCurrent, AllQueued):
+            return "small"
+        except NoMatch as exc:
+            image = fetch_next(config, unfiltered=True, note=str(exc))
+        prerender(image, config)
+        return "ok"
+    except Exception as exc:  # noqa: BLE001 - retried after the backoff
+        print(f"museum-wallpapers: prefetch failed: {exc}", file=sys.stderr)
+        return "failed"
+
+
+def prefetch(config):
+    """Fill the queue up to prefetchCount for the active filter, up to
+    PREFETCH_WORKERS paintings at a time, each framed for the screens right
+    away so a switch only sets it. Like a switch, a filter that matches
+    nothing gets random paintings; a failure is stamped so the tick backs
+    off instead of retrying every minute."""
+    stamp = CACHE / ".prefetch-failed.json"
+    attempts = config["prefetchCount"] * 2
+    while attempts > 0:
+        # Taken per round: a failure under filter A must not hold back
+        # filter B set from the card while A was downloading.
+        key = queue_key(config)
+        missing = config["prefetchCount"] - len(queue_items(config)) - in_flight(key)
+        if missing <= 0:
+            break
+        workers = min(PREFETCH_WORKERS, missing, attempts)
+        attempts -= workers
+        with timed(f"prefetch round of {workers}"):
+            if workers == 1:
+                results = [_prefetch_one(config)]
+            else:
+                with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="prefetch") as pool:
+                    results = list(pool.map(lambda _n: _prefetch_one(config), range(workers)))
+        if "small" in results:
+            # A small pool: all it has is queued or showing. The next switch
+            # prefetches again; the tick need not ask every minute.
+            write_json(stamp, {"at": time.time(), "filter": key, "reason": "small pool"})
+            return
+        if "failed" in results:
             write_json(stamp, {"at": time.time(), "filter": key})
             return
     stamp.unlink(missing_ok=True)
+
+
+def prerender(image, config):
+    """Frame a queued painting for every monitor size now, so switching to it
+    only sets the wallpaper (render reuses these copies)."""
+    if not image or (config["fit"] == "cover" and config["caption"] == "off"):
+        return
+    with timed("frame ahead"):
+        sizes = {}
+        for monitor in monitors():
+            sizes.setdefault((monitor.width, monitor.height, monitor.inset), monitor)
+        for monitor in sizes.values():
+            render(image, config, monitor)
 
 
 def prefetch_wanted(config):
