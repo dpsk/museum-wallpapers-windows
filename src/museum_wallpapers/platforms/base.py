@@ -115,7 +115,10 @@ class Platform:
             ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
              "/usr/share/fonts/TTF/DejaVuSans.ttf"),
         )
-        return tuple(next((p for p in group if os.path.exists(p)), None) for group in candidates)
+        chosen = tuple(next((p for p in group if os.path.exists(p)), None) for group in candidates)
+        fallbacks = [p for p in ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                                 "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc") if os.path.exists(p)]
+        return (*chosen, *fallbacks)
 
 
 class DevPlatform(Platform):

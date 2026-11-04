@@ -451,10 +451,14 @@ class WindowsPlatform(Platform):
         return super().ui_language()
 
     def caption_fonts(self):
+        """(title, body, *fallbacks): Georgia Italic and Segoe UI, then fonts
+        for scripts they lack (Chinese, Japanese, Korean, Indic, Thai, symbols)."""
         fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
         title = next((fonts / f for f in ("georgiai.ttf", "seguisli.ttf", "segoeuii.ttf") if (fonts / f).exists()), None)
         body = next((fonts / f for f in ("segoeui.ttf", "arial.ttf") if (fonts / f).exists()), None)
-        return (title, body)
+        fallbacks = [fonts / f for f in ("msyh.ttc", "YuGothM.ttc", "malgun.ttf", "Nirmala.ttc", "Nirmala.ttf",
+                                         "leelawui.ttf", "seguisym.ttf", "arialuni.ttf") if (fonts / f).exists()]
+        return (title, body, *fallbacks)
 
     # -- autostart
 
