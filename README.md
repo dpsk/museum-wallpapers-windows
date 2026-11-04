@@ -9,6 +9,8 @@ The Windows version of the Omarchy plugin
 the same painting picker, descriptions, filters, prefetch queue and Save, in a
 tray app you install with one setup file.
 
+Website: **[nikaliuk.in](https://nikaliuk.in/)**
+
 - **Endless and high-resolution.** Tens of thousands of paintings listed on
   Wikidata, shown from their Wikimedia Commons scans: only scans large enough
   for your screen (up to 4K), only landscape-shaped works, never tiles or
