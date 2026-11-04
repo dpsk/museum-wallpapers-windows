@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 — unreleased
+## 0.1.0 — 2026-11-04
 
 First Windows version, ported from omarchy-museum-wallpapers 0.1.1.
 

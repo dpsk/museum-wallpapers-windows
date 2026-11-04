@@ -8,10 +8,21 @@ interval, with the title, artist, museum and a short story one click away.
 
 ## Status — 2026-11-04
 
-Steps 1–3 of the plan below and the packaging are written; **nothing has run
-on Windows yet**. The code was built and tested in a Linux sandbox (Wikimedia
-was unreachable there too, so no live fetch either). The first real run is the
-GitHub Actions `windows-latest` job, then the target laptop.
+Steps 1–3 of the plan below and the packaging are done, and the repo
+[dpsk/museum-wallpapers-windows](https://github.com/dpsk/museum-wallpapers-windows)
+(private for now) builds green on GitHub Actions. Release **v0.1.0** carries
+the installer. What has **not** happened yet is a run of the installed app on
+a real desktop (the target laptop): the tray, the card, toasts, multiple
+monitors and live Wikimedia fetching are only covered by tests and the CI
+runner.
+
+First CI run (`windows-latest`, Python 3.12): 100 tests passed (1 skipped:
+symlinks), the 6 Windows-only tests passed too, including a live round trip:
+IDesktopWallpaper found the runner's monitor (1024×768, taskbar inset 48),
+set an image and read the same path back. The frozen `MuseumWallpapers.exe
+selftest` found every module (comtypes, windows_toasts/winrt, pystray._win32,
+tkinter, PIL.ImageTk) and passed all checks; Inno Setup compiled a 15 MB
+installer.
 
 ### Done
 
@@ -65,30 +76,33 @@ GitHub Actions `windows-latest` job, then the target laptop.
   failed card render no longer kills the card; CI upgrades Inno Setup to
   6.3+ (`x64compatible`).
 
-### Not verified yet (first CI run / the laptop)
+### Verified in CI
 
-1. The frozen build: hidden imports for `winrt` (windows-toasts) and
-   `pystray._win32`; the self-test step catches what is missing.
-2. IDesktopWallpaper per monitor, and that the path it reports back equals
-   the one set (the "is this ours" check depends on it).
-3. Monitor rects from COM matching EnumDisplayMonitors at 125–150% scaling
-   (insets fall back to none when they do not match).
-4. Toast buttons from an unpackaged app with the registry AUMID.
-5. The Tk card on a real desktop: focus-out closing, position above the
+- The frozen build has every module it needs (self-test).
+- IDesktopWallpaper per monitor: set and read back the same path; monitor
+  enumeration through COM and EnumDisplayMonitors; taskbar inset.
+
+### Not verified yet (the laptop)
+
+1. Monitor rects from COM matching EnumDisplayMonitors at 125–150% scaling
+   (insets fall back to none when they do not match), and several monitors.
+2. Toast buttons from an unpackaged app with the registry AUMID.
+3. The Tk card on a real desktop: focus-out closing, position above the
    taskbar, DPI scaling.
-6. Live Wikimedia fetching end to end (same code as the plugin).
+4. Live Wikimedia fetching end to end (same code as the plugin).
+5. The installer: autostart, Start menu shortcut, update over a running app,
+   uninstall.
 
 ### Next steps
 
-1. ~~Create the repo `dpsk/museum-wallpapers-windows`~~ (created private on
-   2026-11-04; make it public in Settings when ready), push, let CI run; fix
-   what the Windows job reports (download `selftest-report` if the build
-   fails).
-2. Install the artifact on the target laptop and walk the checklist:
-   multiple monitors, scaling 125–150%, sleep and resume, offline start,
-   first run with an empty cache, Spotlight/slideshow background before
-   install, uninstall.
-3. Tag `v0.1.0` for a release with the installer attached.
+1. Install `MuseumWallpapers-Setup-0.1.0.exe` (Releases, or the
+   `MuseumWallpapers-Setup` artifact of any CI run) on the target laptop and
+   walk the list above, plus sleep and resume, offline start, first run with
+   an empty cache, a Spotlight/slideshow background before install.
+2. Fix what that finds; bump `VERSION` in `src/museum_wallpapers/__init__.py`,
+   add a CHANGELOG entry, tag `vX.Y.Z` — CI attaches the installer to the
+   release.
+3. Make the repo public when ready (Settings → General → Danger Zone).
 4. Later: optional global hotkeys (off by default), winget manifest, update
    check against GitHub releases, code signing (Azure Trusted Signing).
 
