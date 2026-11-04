@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1 — unreleased
+
+- Microsoft Store package (MSIX): installs without the SmartScreen warning.
+  In the Store build, Start with Windows is the package's startup task
+  (also listed in Settings → Apps → Startup), and cache and settings live in
+  the package's own folder, removed on uninstall.
+- CI builds the Store package and installs it on the runner to run the
+  self-test with package identity.
+
 ## 0.1.0 — 2026-11-04
 
 First Windows version, ported from omarchy-museum-wallpapers 0.1.1.

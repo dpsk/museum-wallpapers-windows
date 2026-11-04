@@ -24,6 +24,26 @@ selftest` found every module (comtypes, windows_toasts/winrt, pystray._win32,
 tkinter, PIL.ImageTk) and passed all checks; Inno Setup compiled a 15 MB
 installer.
 
+### Microsoft Store (0.1.1)
+
+- Product reserved in Partner Center: **Museum Wallpapers**, Store ID
+  `9PLK21LK9KSL`, identity `dpsk.MuseumWallpapers`, publisher
+  `CN=11410CB1-4E3D-406F-8EAE-2D56EEB598E5`, PFN
+  `dpsk.MuseumWallpapers_9n62pad56wkq8`. These are in
+  `packaging/AppxManifest.xml`.
+- `packaging/build.py` also makes `dist/MuseumWallpapers-<v>.0-store.msix`
+  (unsigned; the Store signs it). CI signs a copy with a throwaway
+  certificate, installs it and runs the self-test through the
+  `museum-wallpapers.exe` alias, so with package identity.
+- Packaged differences (`platforms/windows.py`): StartupTask
+  `MuseumWallpapersStartup` instead of the Run key; cache/settings in
+  `%LOCALAPPDATA%\Packages\<PFN>\LocalCache\MuseumWallpapers` by real path
+  (AppData seen from inside a package is redirected and Explorer could not
+  open the wallpaper); toasts under the package AUMID; a sign-in start is
+  detected from the activation kind.
+- Release flow: bump `VERSION`, CHANGELOG, tag `vX.Y.Z`; upload the release's
+  `-store.msix` to a new Partner Center submission.
+
 ### Done
 
 - `src/museum_wallpapers/core.py` — the plugin's `museum.py` (v0.1.1) with

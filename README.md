@@ -25,15 +25,20 @@ tray app you install with one setup file.
 
 ## Install
 
-1. Download `MuseumWallpapers-Setup-<version>.exe` from
-   [Releases](https://github.com/dpsk/museum-wallpapers-windows/releases).
-2. Run it. Windows may say "Windows protected your PC" because the installer
-   is not code-signed yet: click **More info → Run anyway**.
-3. That's all. No administrator rights needed. The first painting appears
-   within a few seconds; a gilt-frame icon sits by the clock (it may hide
-   under the **^** arrow — drag it onto the taskbar to keep it visible).
+**Microsoft Store** (recommended): [Museum Wallpapers](https://apps.microsoft.com/detail/9PLK21LK9KSL)
+— installs without warnings and updates itself (live once Microsoft certifies it).
 
-Requires Windows 10 or 11 and an internet connection to Wikimedia.
+**Or the installer** from
+[Releases](https://github.com/dpsk/museum-wallpapers-windows/releases):
+download `MuseumWallpapers-Setup-<version>.exe` and run it. It is not
+code-signed, so Windows says "Windows protected your PC": click
+**More info → Run anyway**. No administrator rights needed. (The `.msix` on
+the release page is the Store upload; it does not install by itself.)
+
+The first painting appears within a few seconds; a gilt-frame icon sits by
+the clock (it may hide under the **^** arrow — drag it onto the taskbar to
+keep it visible). Requires Windows 10 or 11 and an internet connection to
+Wikimedia.
 
 ## Using it
 
@@ -67,16 +72,19 @@ All of these are in the tray menu; they are stored in
 | `filters` | none | | `yearFrom`, `yearTo`, `artists`, `movements`, `genres`; see the [plugin's README](https://github.com/dpsk/omarchy-museum-wallpapers#filters) |
 
 **Start with Windows** in the menu adds or removes the app from sign-in
-(the installer turns it on by default).
+(on by default; in the Store version it is also in Settings → Apps → Startup).
 
 ## Remove
 
 **Settings → Apps → Installed apps → Museum Wallpapers → Uninstall.** This
-removes the app, its cache and settings; paintings you saved stay in
+removes the app, its cache and settings (the Store version keeps them in its
+own package folder, which Windows removes); paintings you saved stay in
 `Pictures\Museum Wallpapers`. The wallpaper on screen stays until you pick
 another one.
 
 ## Data, privacy and licensing
+
+See [PRIVACY.md](PRIVACY.md).
 
 The app talks only to Wikimedia: `commons.wikimedia.org`, `upload.wikimedia.org`,
 `www.wikidata.org`, `query.wikidata.org` and `*.wikipedia.org`. Requests carry
@@ -105,7 +113,7 @@ python -m pytest                        # unit tests (any OS; Windows-only ones 
 python -m museum_wallpapers             # the tray app (from src/, or after pip install -e .)
 python -m museum_wallpapers next        # core commands: tick, next, status, keep, filter …
 python -m museum_wallpapers selftest    # what the build can and cannot do
-python packaging/build.py               # Windows only: PyInstaller app + self-test + Inno Setup installer
+python packaging/build.py               # Windows only: app + self-test + installer + Store .msix
 ```
 
 Off Windows, `MUSEUM_WALLPAPERS_PLATFORM=dev` (the default there) runs the whole
@@ -121,7 +129,7 @@ Layout:
 | `src/museum_wallpapers/platforms/` | What the OS does: `windows.py` (IDesktopWallpaper, monitors, toasts, autostart), `base.py` (interface + dev stand-in) |
 | `src/museum_wallpapers/framing.py` | Blur / wall / fill framing and the caption, with Pillow |
 | `src/museum_wallpapers/app.py`, `card.py` | Tray icon, menu, scheduler; the card window (Tk) |
-| `packaging/` | PyInstaller spec, build script, Inno Setup installer |
+| `packaging/` | PyInstaller spec, build script, Inno Setup installer, MSIX manifest for the Store |
 | `.github/workflows/build.yml` | Tests on Linux and Windows, builds the installer, attaches it to `v*` releases |
 
 ## License

@@ -3,3 +3,8 @@ Pillow==12.3.0
 pystray==0.19.5
 comtypes==1.4.17; sys_platform == "win32"
 windows-toasts==1.3.1; sys_platform == "win32"
+# StartupTask and activation kind in the Microsoft Store (MSIX) build
+winrt-runtime==3.2.1; sys_platform == "win32"
+winrt-Windows.ApplicationModel==3.2.1; sys_platform == "win32"
+winrt-Windows.ApplicationModel.Activation==3.2.1; sys_platform == "win32"
+winrt-Windows.Foundation==3.2.1; sys_platform == "win32"
