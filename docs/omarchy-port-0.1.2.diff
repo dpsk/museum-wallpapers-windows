@@ -55,7 +55,33 @@
  # ----------------------------------------------------------------- network
  
  
-@@ -698,12 +716,23 @@
+@@ -645,7 +663,24 @@
+         named = dict(zip(parts[1::2], parts[2::2]))
+         text = named.get("English") or next(iter(named.values()))
+     text = text.strip().rstrip(".")
+-    return text[:120] or None
++    if len(text) > 120:  # on a word boundary, not "…At Sunrise, o"
++        text = text[:120].rsplit(" ", 1)[0].rstrip(" ,;:") + "…"
++    return text or None
++
++
++# Paintings shown are public domain: a date after this on the file page is
++# the photograph's or the upload's (e.g. "10 April 2008"), not the painting's.
++LATEST_PAINTING_YEAR = 1950
++
++
++def painting_date(markup):
++    """Commons' DateTimeOriginal as the painting's date, or "" when it is
++    plainly the date of the scan."""
++    text = plain(markup, 40)
++    years = [int(y) for y in re.findall(r"\b(\d{4})\b", text)]
++    if years and min(years) > LATEST_PAINTING_YEAR:
++        return ""
++    return text
+ 
+ 
+ def without_quickstatements(text):
+@@ -698,12 +733,23 @@
      collections = claim_ids(painting, "P195")
      movements = claim_ids(painting, "P135")
      genres = claim_ids(painting, "P136")
@@ -82,7 +108,16 @@
  
      year = claim_year(painting)
      info = {
-@@ -726,57 +755,109 @@
+@@ -713,7 +759,7 @@
+         or page["title"][5:],
+         "artist": label(artist, language) or plain(meta.get("Artist", {}).get("value"), 80) or "Unknown artist",
+         "artistId": creators[0] if creators else None,
+-        "year": str(year) if year is not None else plain(meta.get("DateTimeOriginal", {}).get("value"), 40),
++        "year": str(year) if year is not None else painting_date(meta.get("DateTimeOriginal", {}).get("value")),
+         "museum": label(related.get(collections[0], {}), language) if collections else None,
+         "movement": label(movement, language),
+         "movementId": movements[0] if movements else None,
+@@ -726,57 +772,109 @@
  
      # Best first: the painting's own article, the Commons description, then
      # a few lines about the artist.
@@ -234,7 +269,7 @@
          else:
              tmp = dest.with_name(f"{dest.name}.{os.getpid()}-{threading.get_ident()}.part")
              shutil.copyfile(cached, tmp)
-@@ -802,27 +883,25 @@
+@@ -802,27 +900,25 @@
      # An explicit artist (or "More by …") is shown however famous they are.
      if config["fame"] != "any" and not filters["artists"]:
          filters["fameArtists"] = famous_painters(FAME[config["fame"]])
@@ -276,7 +311,7 @@
                      current_matched = True
                  else:
                      repeats.append((page, qid))
-@@ -836,6 +915,9 @@
+@@ -836,6 +932,9 @@
      # but never one that is still waiting in the queue.
      random.shuffle(repeats)
      for page, qid in repeats:
@@ -286,7 +321,7 @@
          dest = enqueue(page, qid, config, key, note)
          if dest:
              return dest
-@@ -937,8 +1019,12 @@
+@@ -937,8 +1036,12 @@
          corner = config["caption"] if caption else "none"
          inset = "-".join(str(x) for x in monitor.inset) if caption else "0"
          name = f"{original.stem}.{config['fit']}.{corner}.{monitor.width}x{monitor.height}.{inset}.jpg"
@@ -301,7 +336,7 @@
      except Exception as exc:  # noqa: BLE001 - a broken image must not stop the rotation
          print(f"museum-wallpapers: could not frame {original.name}: {exc}", file=sys.stderr)
          return original
-@@ -999,7 +1085,7 @@
+@@ -999,7 +1102,7 @@
  
  
  def info_for(image, config):
@@ -310,7 +345,7 @@
      if sidecar:
          return sidecar
      saved = saved_index(config).get(image.name)
-@@ -1039,9 +1125,10 @@
+@@ -1039,9 +1142,10 @@
              _unlink(image.with_suffix(".json"))
      # Framed copies of the painting on screen stay (one per monitor size);
      # Windows keeps the file it shows open, so a failed delete is retried later.
@@ -323,7 +358,7 @@
              _unlink(framed)
      # Pools whose filter or painter list changed are never read again.
      pools = CACHE / "pools"
-@@ -1161,10 +1248,10 @@
+@@ -1161,10 +1265,10 @@
  
      `.lock` guards switching and the queue's contents and is held only
      briefly. `.prefetcher.lock` keeps a single process filling the queue.
@@ -338,7 +373,7 @@
      other processes (a command line run beside it).
      `.save.lock` serializes Save, `.settings.lock` settings.json edits."""
      return filelock.acquire(CACHE / name, wait=wait)
-@@ -1175,35 +1262,25 @@
+@@ -1175,35 +1279,25 @@
      for network or Wikimedia trouble: every failure is recorded, so the
      minute tick does not retry until the next interval."""
      error, error_kind = "", ""
@@ -391,7 +426,7 @@
      report(error, error_kind)
      if not image:
          local_fallback(config, error, error_kind)
-@@ -1213,7 +1290,8 @@
+@@ -1213,7 +1307,8 @@
          _replace(image.with_suffix(".json"), target.with_suffix(".json"))
          _replace(image, target)
          os.utime(target)
@@ -401,7 +436,7 @@
      except Exception as exc:  # noqa: BLE001 - OSError, or a COM error from the wallpaper API
          error, error_kind = f"Could not set the background: {exc}", "background"
          report(error, error_kind)
-@@ -1230,36 +1308,86 @@
+@@ -1230,36 +1325,86 @@
      return error
  
  

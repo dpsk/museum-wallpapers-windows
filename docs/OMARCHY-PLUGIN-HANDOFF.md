@@ -114,6 +114,21 @@ titles benefit from the same cleanup: apply it to `info["title"]` in
 `describe`, or where the placard and notifications read it. Skip the
 fontTools font picking (Windows only, and not standard library).
 
+### 8. Metadata fallbacks (both apps showed these)
+
+Seen on "The Disembarkation of Christopher Columbus…" (Aivazovsky), a painting
+whose Wikidata item has no date and no English label:
+
+- `object_name`: cut at 120 characters on a word boundary with "…" (it cut
+  mid-word: "…At Sunrise, o").
+- `describe`: `"year"` from Commons `DateTimeOriginal` only through
+  `painting_date()`, which drops the value when every 4-digit year in it is
+  after `LATEST_PAINTING_YEAR = 1950` — that is the scan or upload date
+  ("10 April 2008"), not the painting's.
+
+Tests: `test_long_object_names_end_on_a_word`,
+`test_scan_dates_are_not_painting_years`.
+
 ## Skip (Windows only)
 
 Per-monitor framing and `screens_key`, `caption` drawn into the wallpaper,
