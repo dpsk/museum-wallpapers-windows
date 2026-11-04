@@ -51,8 +51,16 @@ class WindowsLiveTest(unittest.TestCase):
             self.assertGreater(monitor.width, 0)
             self.assertGreater(monitor.height, 0)
         self.assertRegex(self.platform.ui_language(), r"^[a-z]{2,3}$")
-        title, body = self.platform.caption_fonts()
+        title, body, *fallbacks = self.platform.caption_fonts()
+        print("caption fonts:", title, body, fallbacks, file=sys.stderr)
         self.assertTrue(body is None or Path(body).exists())
+        for font in fallbacks:
+            self.assertTrue(Path(font).exists())
+        # Windows ships fonts for Chinese/Japanese/Korean; titles in them must not become boxes.
+        from museum_wallpapers import framing
+        cjk = framing.pick_font([title, body, *fallbacks], "神奈川沖浪裏")
+        self.assertEqual(framing.missing(cjk, "神奈川沖浪裏"), 0)
+        self.assertEqual(framing.missing(title, "Sea coast"), 0)
 
     @unittest.skipUnless(os.environ.get("MUSEUM_WALLPAPERS_LIVE_WALLPAPER") == "1", "set MUSEUM_WALLPAPERS_LIVE_WALLPAPER=1")
     def test_set_and_read_back_the_wallpaper(self):

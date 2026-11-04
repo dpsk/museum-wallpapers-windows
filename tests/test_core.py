@@ -136,6 +136,21 @@ class WikidataTest(unittest.TestCase):
         self.assertEqual(museum.object_name("The English: A Portrait"), "The English: A Portrait")
         self.assertIsNone(museum.object_name(""))
 
+    def test_long_object_names_end_on_a_word(self):
+        name = ("The Disembarkation of Christopher Columbus with Companions on Three Launches, "
+                "on Friday 12th October 1492, At Sunrise, on an American Island")
+        short = museum.object_name(name)
+        self.assertTrue(short.endswith("At Sunrise…"), short)
+        self.assertLessEqual(len(short), 121)
+
+    def test_scan_dates_are_not_painting_years(self):
+        self.assertEqual(museum.painting_date("10 April 2008"), "")
+        self.assertEqual(museum.painting_date("<time>2012-03-01</time>"), "")
+        self.assertEqual(museum.painting_date("circa 1873"), "circa 1873")
+        self.assertEqual(museum.painting_date("1873–1875"), "1873–1875")
+        self.assertEqual(museum.painting_date("1910, photographed 2009"), "1910, photographed 2009")
+        self.assertEqual(museum.painting_date(""), "")
+
     def test_commons_description_without_quickstatements(self):
         raw = ('Reval (Tallinn) label QS:Len,"Reval (Tallinn)" label QS:Lde,"Reval (heute Tallinn) in Estland" '
                'label QS:Lru,"Ревель (Таллин)"')
