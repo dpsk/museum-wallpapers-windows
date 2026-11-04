@@ -16,6 +16,8 @@ hiddenimports = (
     # windows-toasts reaches WinRT through the winrt.* namespace packages,
     # which PyInstaller cannot see through static analysis.
     + collect_submodules("winrt")
+    # fontTools loads its table modules by name (cmap for the caption fonts).
+    + collect_submodules("fontTools.ttLib.tables")
 )
 
 a = Analysis(
