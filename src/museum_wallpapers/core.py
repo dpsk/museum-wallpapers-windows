@@ -663,7 +663,24 @@ def object_name(markup):
         named = dict(zip(parts[1::2], parts[2::2]))
         text = named.get("English") or next(iter(named.values()))
     text = text.strip().rstrip(".")
-    return text[:120] or None
+    if len(text) > 120:  # on a word boundary, not "…At Sunrise, o"
+        text = text[:120].rsplit(" ", 1)[0].rstrip(" ,;:") + "…"
+    return text or None
+
+
+# Paintings shown are public domain: a date after this on the file page is
+# the photograph's or the upload's (e.g. "10 April 2008"), not the painting's.
+LATEST_PAINTING_YEAR = 1950
+
+
+def painting_date(markup):
+    """Commons' DateTimeOriginal as the painting's date, or "" when it is
+    plainly the date of the scan."""
+    text = plain(markup, 40)
+    years = [int(y) for y in re.findall(r"\b(\d{4})\b", text)]
+    if years and min(years) > LATEST_PAINTING_YEAR:
+        return ""
+    return text
 
 
 def without_quickstatements(text):
@@ -742,7 +759,7 @@ def describe(page, qid, language):
         or page["title"][5:],
         "artist": label(artist, language) or plain(meta.get("Artist", {}).get("value"), 80) or "Unknown artist",
         "artistId": creators[0] if creators else None,
-        "year": str(year) if year is not None else plain(meta.get("DateTimeOriginal", {}).get("value"), 40),
+        "year": str(year) if year is not None else painting_date(meta.get("DateTimeOriginal", {}).get("value")),
         "museum": label(related.get(collections[0], {}), language) if collections else None,
         "movement": label(movement, language),
         "movementId": movements[0] if movements else None,
