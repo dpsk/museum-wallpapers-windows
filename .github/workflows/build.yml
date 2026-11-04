@@ -1,0 +1,75 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write  # attach the installer to a release on tags
+
+jobs:
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - name: Unit tests
+        env:
+          PYSTRAY_BACKEND: dummy
+        run: python -m pytest -q
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+
+      - name: Unit tests (incl. Windows layer)
+        env:
+          PYSTRAY_BACKEND: dummy
+        run: python -m pytest -q
+
+      - name: Live wallpaper round trip on the runner's desktop
+        # Hosted runners have an odd desktop session; failures here are
+        # informative, not fatal. The target laptop is the real test.
+        continue-on-error: true
+        env:
+          MUSEUM_WALLPAPERS_LIVE_WALLPAPER: "1"
+        run: python -m pytest -q -s tests/test_windows.py
+
+      - name: Install Inno Setup (6.3+ for x64compatible)
+        shell: pwsh
+        run: |
+          choco upgrade innosetup --no-progress -y
+          (Get-Item "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe").VersionInfo.ProductVersion
+
+      - name: Build app, self-test it, build installer
+        run: python packaging/build.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MuseumWallpapers-Setup
+          path: dist/MuseumWallpapers-Setup-*.exe
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: selftest-report
+          path: packaging/build/selftest.json
+        if: always()
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/MuseumWallpapers-Setup-*.exe
+          generate_release_notes: true
