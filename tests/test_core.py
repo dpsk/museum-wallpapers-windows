@@ -4,6 +4,7 @@ import io
 import json
 import os
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -379,9 +380,16 @@ class SwitchTest(unittest.TestCase):
             made.append(self.queue_image(f"commons-{len(made) + 1}", key, 1000 + len(made)))
             return made[-1]
 
-        with mock.patch.object(museum, "fetch_next", side_effect=fake_fetch):
+        lock = threading.Lock()
+
+        def fake_fetch_locked(config):
+            with lock:
+                return fake_fetch(config)
+
+        with mock.patch.object(museum, "fetch_next", side_effect=fake_fetch_locked):
             museum.prefetch(self.config)
-        self.assertEqual(len(museum.queue_items(self.config)), 3)
+        self.assertEqual(len(museum.queue_items(self.config)), self.config["prefetchCount"])
+        self.assertEqual(len(made), self.config["prefetchCount"])
 
     def test_second_prefetcher_backs_off(self):
         first = museum.lock(".prefetcher.lock", wait=False)
@@ -445,7 +453,8 @@ class SwitchTest(unittest.TestCase):
 
         with mock.patch.object(museum, "fetch_next", side_effect=fetch):
             museum.prefetch(self.config)
-        self.assertEqual(calls, [False, True])
+        # Each parallel download tried the filter, then a random painting, then gave up.
+        self.assertEqual(sorted(calls), [False] * museum.PREFETCH_WORKERS + [True] * museum.PREFETCH_WORKERS)
         self.assertFalse(museum.prefetch_wanted(self.config))
         museum.write_json(self.cache / ".prefetch-failed.json", {"at": time.time() - 3600, "filter": "x"})
         self.assertTrue(museum.prefetch_wanted(self.config))
@@ -646,6 +655,116 @@ class SwitchTest(unittest.TestCase):
         self.assertIn("Claude Monet · 1873", body)
         museum.cmd_open(self.config, None)
         self.assertEqual(self.platform.opened, ["https://en.wikipedia.org/wiki/Poppies"])
+
+    # ---- 0.1.2: parallel prefetch, waiting for downloads, framing ahead
+
+    def test_parallel_claims_take_each_painting_once(self):
+        key = museum.queue_key(self.config)
+        results = []
+        barrier = threading.Barrier(8)
+
+        def worker():
+            barrier.wait()
+            results.append(museum.claim("commons-42", key))
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(sorted(results), ["claimed"] + ["queued"] * 7)
+        self.assertEqual(museum.in_flight(key), 1)
+
+    def test_shown_paintings_are_not_claimed_unless_repeating(self):
+        key = museum.queue_key(self.config)
+        (self.cache / "commons-7.jpg").write_bytes(b"jpg")
+        self.assertEqual(museum.claim("commons-7", key), "shown")
+        self.assertEqual(museum.claim("commons-7", key, allow_shown=True), "claimed")
+
+    def test_stale_claims_from_other_processes_do_not_count(self):
+        key = museum.queue_key(self.config)
+        queue = self.cache / "queue"
+        queue.mkdir()
+        sidecar = queue / "commons-9.json"
+        museum.write_json(sidecar, {"filter": key, "claimedBy": -1})
+        self.assertEqual(museum.in_flight(key), 1)
+        old = time.time() - museum.IN_FLIGHT_AGE - 5
+        os.utime(sidecar, (old, old))
+        self.assertEqual(museum.in_flight(key), 0)
+        museum.write_json(sidecar, {"filter": key, "claimedBy": os.getpid()})
+        os.utime(sidecar, (old, old))
+        self.assertEqual(museum.in_flight(key), 1)
+
+    def test_switch_waits_for_a_download_in_flight(self):
+        key = museum.queue_key(self.config)
+        museum.claim("commons-11", key)
+
+        def finish():
+            time.sleep(0.4)
+            self.queue_image("commons-11", key, time.time())
+
+        threading.Thread(target=finish).start()
+        with mock.patch.object(museum, "fetch_next") as fetch, mock.patch.object(museum, "set_background"):
+            self.assertEqual(museum.switch(self.config), "")
+        fetch.assert_not_called()
+        self.assertTrue((self.cache / "commons-11.jpg").exists())
+
+    def test_thumbnail_widths_are_standard_steps(self):
+        self.assertEqual(museum.thumb_width(3840), 3840)
+        self.assertEqual(museum.thumb_width(2560), 3840)
+        self.assertEqual(museum.thumb_width(1920), 1920)
+        self.assertEqual(museum.thumb_width(2000), 1920)  # 0.95 of the screen is sharp enough
+        self.assertEqual(museum.thumb_width(1366), 1920)
+        self.assertEqual(museum.thumb_width(1280), 1280)
+        self.assertEqual(museum.thumb_width(5120), 3840)
+        for width in (800, 1366, 1600, 2560, 3440, 3840, 7680):
+            self.assertIn(museum.thumb_width(width), museum.THUMB_STEPS)
+
+    def test_queued_paintings_are_framed_ahead_and_kept(self):
+        key = museum.queue_key(self.config)
+        config = museum.normalize_config({**self.config, "fit": "blur", "caption": "bottom-right"})
+        key = museum.queue_key(config)
+        image = make_jpeg(self.cache / "queue" / "commons-21.jpg")
+        museum.write_json(image.with_suffix(".json"), {"title": "Poppies", "artist": "Claude Monet", "filter": key})
+        museum.prerender(image, config)
+        framed = list((self.cache / "display").glob("commons-21.*.jpg"))
+        self.assertEqual(len(framed), 1)
+        museum.prune(config)
+        self.assertTrue(framed[0].exists())
+        with mock.patch.object(museum.framing, "frame") as frame:
+            museum.switch(config)
+        frame.assert_not_called()
+        self.assertEqual(self.platform.walls[-1]["m1"], framed[0])
+
+    def test_queued_paintings_are_described_by_their_sidecar(self):
+        image = self.queue_image("commons-22", "k", 1000)
+        museum.write_json(image.with_suffix(".json"), {"title": "The Hay Wain", "filter": "k"})
+        self.assertEqual(museum.info_for(image, self.config)["title"], "The Hay Wain")
+
+    def test_describe_fetches_in_parallel_and_falls_back(self):
+        page = {"title": "File:X.jpg", "imageinfo": [{"descriptionurl": "https://commons/X",
+                                                      "extmetadata": {}}]}
+        painting = {"labels": {"en": {"value": "Poppies"}}, "sitelinks": {"enwiki": {"title": "Poppies"}},
+                    "claims": {**claim("P170", {"id": "Q296"}), **claim("P135", {"id": "Q40415"})}}
+        artist = {"labels": {"en": {"value": "Claude Monet"}}, "sitelinks": {"enwiki": {"title": "Claude Monet"}}}
+
+        def entities(ids, **_kwargs):
+            data = {"Q1": painting, "Q296": artist, "Q40415": {"labels": {"en": {"value": "Impressionism"}}}}
+            return {i: data[i] for i in ids if i in data}
+
+        threads = set()
+
+        def summary(language, title):
+            threads.add(threading.current_thread().name)
+            return ("", None) if title == "Poppies" else (f"{title} was a painter.", f"https://en/{title}")
+
+        with mock.patch.object(museum, "entities", side_effect=entities), \
+                mock.patch.object(museum, "wikipedia_summary", side_effect=summary):
+            info = museum.describe(page, "Q1", "en")
+        self.assertEqual((info["title"], info["artist"], info["movement"]), ("Poppies", "Claude Monet", "Impressionism"))
+        self.assertEqual(info["summary"], "About the artist: Claude Monet was a painter.")
+        self.assertEqual(info["url"], "https://en/Claude Monet")
+        self.assertTrue(any(name.startswith("describe") for name in threads))
 
     def test_filter_change_leaves_downloads_alone(self):
         queue = self.cache / "queue"

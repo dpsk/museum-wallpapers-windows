@@ -161,6 +161,25 @@ class CaptionTest(unittest.TestCase):
         self.assertAlmostEqual(framing.crop_fraction(3840, 2160, (3840, 2160)), 0)
 
 
+class CaptionTextTest(unittest.TestCase):
+    def test_clean_text(self):
+        self.assertEqual(framing.clean_text("Sea\u2009\u200bcoast"), "Sea coast")
+        self.assertEqual(framing.clean_text("Soft\u00adhyphen\u00a0and\u202fspaces"), "Softhyphen and spaces")
+        self.assertEqual(framing.clean_text("\u200eLeft-to-right\u200f"), "Left-to-right")
+        self.assertEqual(framing.clean_text(None), "")
+
+    def test_fonts_are_picked_by_coverage(self):
+        with mock.patch.object(framing, "_coverage", side_effect=lambda p: {
+                "latin": frozenset(map(ord, "abcdefghijklmnopqrstuvwxyz ")),
+                "cjk": frozenset(map(ord, "abc神奈川"))}.get(p)):
+            self.assertEqual(framing.pick_font(["latin", "cjk"], "sea"), "latin")
+            self.assertEqual(framing.pick_font(["latin", "cjk"], "神奈川"), "cjk")
+            self.assertEqual(framing.pick_font(["latin", "cjk"], "abc 神"), "cjk")  # covers all
+            self.assertEqual(framing.pick_font(["latin", "cjk"], "sea 神"), "latin")  # misses fewest
+            self.assertEqual(framing.drawable("latin", "sea 神奈川 x"), "sea x")
+            self.assertEqual(framing.drawable(None, "anything"), "anything")
+
+
 class PackagingTest(unittest.TestCase):
     """The Store package's manifest and images (built on Windows by packaging/build.py)."""
 
