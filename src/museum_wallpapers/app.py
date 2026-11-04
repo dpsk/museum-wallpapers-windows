@@ -78,8 +78,11 @@ class App:
         sys.excepthook = lambda *exc: log.write("".join(traceback.format_exception(*exc)))
         threading.excepthook = lambda args: log.write(
             "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback)))
-        print(f"museum-wallpapers: {APP_NAME} {VERSION} starting on {self.platform.name}", file=sys.stderr)
+        print(f"museum-wallpapers: {APP_NAME} {VERSION} starting on {self.platform.name}"
+              f"{' (Store package)' if self.platform.packaged else ''}", file=sys.stderr)
         self.platform.setup()
+        if self.platform.launched_at_startup():
+            self.background = True
         icon_path = resources.icon_file(core.CACHE.parent)
         if hasattr(self.platform, "register_app"):
             try:
@@ -210,14 +213,18 @@ class App:
     def _autostart(self):
         try:
             return self.platform.autostart_enabled()
-        except OSError:
+        except Exception:  # noqa: BLE001
             return False
 
     def toggle_autostart(self, *_args):
+        wanted = not self._autostart()
         try:
-            self.platform.set_autostart(not self.platform.autostart_enabled())
-        except (OSError, NotImplementedError) as exc:
+            done = self.platform.set_autostart(wanted)
+        except Exception as exc:  # noqa: BLE001 - OSError, or WinRT errors in the Store build
             print(f"museum-wallpapers: autostart: {exc}", file=sys.stderr)
+            done = False
+        if wanted and done is False:
+            core.notify(APP_NAME, strings.t("autostart_blocked", core.load_config()))
         self.refresh()
 
     def open_collection(self, *_args):
@@ -320,7 +327,7 @@ class App:
         ]
         if self.platform.name == "windows":
             items.append(Item(t("start_with_windows"), self.toggle_autostart,
-                              checked=lambda _i: self.platform.autostart_enabled()))
+                              checked=lambda _i: self._autostart()))
         items += [
             Item(t("open_collection"), self.open_collection),
             Menu.SEPARATOR,

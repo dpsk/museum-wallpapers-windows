@@ -14,7 +14,8 @@ from pathlib import Path
 from . import VERSION
 
 REQUIRED = ["PIL.Image", "PIL.ImageFilter", "pystray", "tkinter", "PIL.ImageTk"]
-WINDOWS_REQUIRED = ["comtypes", "windows_toasts", "pystray._win32", "winreg"]
+WINDOWS_REQUIRED = ["comtypes", "windows_toasts", "pystray._win32", "winreg",
+                    "winrt.windows.applicationmodel", "winrt.windows.applicationmodel.activation"]
 
 
 def run(out=None):
@@ -47,6 +48,9 @@ def run(out=None):
     check("work_area", lambda: core.PLATFORM.work_area(), required=False)
     check("ui_language", lambda: core.PLATFORM.ui_language())
     check("fonts", lambda: [str(f) for f in core.PLATFORM.caption_fonts()])
+    check("packaged", lambda: {"packaged": core.PLATFORM.packaged,
+                               "family": getattr(sys.modules.get(type(core.PLATFORM).__module__), "PACKAGE_FAMILY", None),
+                               "aumid": getattr(sys.modules.get(type(core.PLATFORM).__module__), "PACKAGED_AUMID", None)})
     check("autostart", lambda: core.PLATFORM.autostart_enabled())
     check("settings", lambda: {k: v for k, v in core.load_config().items() if k != "filters"})
 

@@ -50,6 +50,28 @@ def write_ico(path):
     return path
 
 
+# MSIX visual assets: name -> (width, height). The icon is centred with a
+# margin on a transparent canvas, as Windows plates tiles itself.
+MSIX_ASSETS = {
+    "StoreLogo.png": (50, 50),
+    "Square44x44Logo.png": (44, 44),
+    "Square150x150Logo.png": (150, 150),
+    "Wide310x150Logo.png": (310, 150),
+}
+
+
+def write_msix_assets(folder):
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, (width, height) in MSIX_ASSETS.items():
+        side = min(width, height)
+        icon = icon_image(side if side <= 50 else int(side * 0.66))
+        canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        canvas.paste(icon, ((width - icon.width) // 2, (height - icon.height) // 2), icon)
+        canvas.save(folder / name)
+    return folder
+
+
 def icon_file(folder):
     """An .ico for toasts and shortcuts: the bundled one in the build, else
     one written into `folder`."""
