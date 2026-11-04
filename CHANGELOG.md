@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.2 — unreleased
+## 0.1.2 — 2026-11-04
 
 - Faster Next: 6 paintings kept ready (was 3), downloaded two at a time, each
   framed for the screens while it waits, so a switch only sets the wallpaper.
