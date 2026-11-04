@@ -95,6 +95,12 @@ class Platform:
         """(left, top, right, bottom) of the primary screen above the taskbar, or None."""
         return None
 
+    packaged = False
+
+    def launched_at_startup(self):
+        """Started automatically at sign-in rather than by the user."""
+        return False
+
     def autostart_enabled(self):
         return False
 

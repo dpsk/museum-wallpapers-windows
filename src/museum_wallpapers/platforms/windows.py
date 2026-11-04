@@ -1,7 +1,14 @@
 """Windows: the wallpaper per monitor through IDesktopWallpaper (COM), with
 SystemParametersInfo as the fallback; monitors and taskbar areas from
 EnumDisplayMonitors; toasts with buttons from windows-toasts (a tray balloon
-when those cannot be shown); autostart in the HKCU Run key."""
+when those cannot be shown); autostart in the HKCU Run key.
+
+Installed from the Microsoft Store (MSIX), the app has a package identity,
+and three things change: autostart is the package's StartupTask (a Run key
+written from inside a package is virtualized and never runs); the cache
+lives in the package's real LocalCache folder (AppData paths seen inside the
+package are redirected, so Explorer could not open a wallpaper stored there);
+toasts use the package's AppUserModelID."""
 
 import contextlib
 import ctypes
@@ -34,6 +41,8 @@ SYNCHRONIZE = 0x00100000
 INFINITE = 0xFFFFFFFF
 WAIT_OBJECT_0 = 0
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+APPMODEL_ERROR_NO_PACKAGE = 15700
+STARTUP_TASK_ID = "MuseumWallpapersStartup"  # as in packaging/AppxManifest.xml
 FOLDERID_PICTURES = "{33E28130-4E1E-4676-835A-98395C3BC3BB}"
 
 CLSID_DESKTOP_WALLPAPER = "{C2CF3110-460E-4fc1-B9D0-8A1C0C9CC4BD}"
@@ -80,6 +89,41 @@ ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
 
 def _rect(r):
     return (r.left, r.top, r.right, r.bottom)
+
+
+def _package_string(function):
+    """GetCurrentPackageFamilyName / GetCurrentApplicationUserModelId:
+    the value, or None outside an MSIX package (or before Windows 8)."""
+    try:
+        call = getattr(kernel32, function)
+    except AttributeError:
+        return None
+    call.argtypes = [ctypes.POINTER(ctypes.c_uint32), wintypes.LPWSTR]
+    call.restype = wintypes.LONG
+    length = ctypes.c_uint32(0)
+    if call(ctypes.byref(length), None) == APPMODEL_ERROR_NO_PACKAGE or not length.value:
+        return None
+    buffer = ctypes.create_unicode_buffer(length.value)
+    return buffer.value if call(ctypes.byref(length), buffer) == 0 else None
+
+
+PACKAGE_FAMILY = _package_string("GetCurrentPackageFamilyName")
+PACKAGED_AUMID = _package_string("GetCurrentApplicationUserModelId") if PACKAGE_FAMILY else None
+
+
+def _await(operation):
+    """The result of a WinRT async operation, from synchronous code."""
+    import asyncio
+
+    async def wait():
+        return await operation
+
+    return asyncio.run(wait())
+
+
+def _startup_task():
+    from winrt.windows.applicationmodel import StartupTask
+    return _await(StartupTask.get_async(STARTUP_TASK_ID))
 
 
 # ----------------------------------------------------------------- COM
@@ -204,6 +248,7 @@ class WindowsPlatform(Platform):
     name = "windows"
 
     def __init__(self):
+        self.packaged = PACKAGE_FAMILY is not None
         self.balloon = None  # the tray app's fallback notification: callable(title, body)
         self._toaster = None
         self._toasts = []  # keep shown toasts alive so their callbacks still fire
@@ -229,6 +274,8 @@ class WindowsPlatform(Platform):
                 ctypes.WinDLL("shcore").SetProcessDpiAwareness(2)
             except (AttributeError, OSError):
                 user32.SetProcessDPIAware()
+        if self.packaged:
+            return  # the package's own AppUserModelID applies
         try:
             shell32.SetCurrentProcessExplicitAppUserModelID(ctypes.c_wchar_p(AUMID))
         except (AttributeError, OSError):
@@ -238,8 +285,14 @@ class WindowsPlatform(Platform):
         if os.environ.get("MUSEUM_WALLPAPERS_HOME"):
             return super().paths()
         home = Path.home()
+        local_root = Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")
+        if self.packaged:
+            # The package's own folder, by its real path; removed on uninstall.
+            base = local_root / "Packages" / PACKAGE_FAMILY / "LocalCache" / APP_ID
+            return {"config": base / "config", "cache": base / "cache", "state": base / "state",
+                    "pictures": self.pictures_folder()}
         roaming = Path(os.environ.get("APPDATA") or home / "AppData" / "Roaming") / APP_ID
-        local = Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local") / APP_ID
+        local = local_root / APP_ID
         return {"config": roaming, "cache": local / "cache", "state": local / "state",
                 "pictures": self.pictures_folder()}
 
@@ -352,7 +405,7 @@ class WindowsPlatform(Platform):
                                     ToastImagePosition)
         with self._toast_lock:
             if self._toaster is None:
-                self._toaster = InteractableWindowsToaster(APP_NAME, notifierAUMID=AUMID)
+                self._toaster = InteractableWindowsToaster(APP_NAME, notifierAUMID=PACKAGED_AUMID or AUMID)
             callbacks = {f"action-{n}": callback for n, (_label, callback) in enumerate(actions)}
 
             def activated(event):
@@ -370,7 +423,9 @@ class WindowsPlatform(Platform):
 
     def register_app(self, icon_path):
         """Name and icon for toasts from this AppUserModelID (the installer's
-        Start menu shortcut carries the same id)."""
+        Start menu shortcut carries the same id). A package has its own."""
+        if self.packaged:
+            return
         key_path = rf"Software\Classes\AppUserModelId\{AUMID}"
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, key_path) as key:
             winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, APP_NAME)
@@ -411,7 +466,27 @@ class WindowsPlatform(Platform):
         runner = pythonw if pythonw.exists() else Path(sys.executable)
         return f'"{runner}" -m museum_wallpapers --background'
 
+    def launched_at_startup(self):
+        """Started by the package's StartupTask at sign-in (MSIX only; the
+        installer's Run key passes --background instead)."""
+        if not self.packaged:
+            return False
+        try:
+            from winrt.windows.applicationmodel import AppInstance
+            from winrt.windows.applicationmodel.activation import ActivationKind
+            args = AppInstance.get_activated_event_args()
+            return args is not None and args.kind == ActivationKind.STARTUP_TASK
+        except Exception as exc:  # noqa: BLE001
+            print(f"museum-wallpapers: activation kind unknown: {exc}", file=sys.stderr)
+            return False
+
     def autostart_enabled(self):
+        if self.packaged:
+            from winrt.windows.applicationmodel import StartupTaskState
+            try:
+                return _startup_task().state in (StartupTaskState.ENABLED, StartupTaskState.ENABLED_BY_POLICY)
+            except Exception:  # noqa: BLE001
+                return False
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
                 winreg.QueryValueEx(key, APP_ID)
@@ -420,12 +495,23 @@ class WindowsPlatform(Platform):
             return False
 
     def set_autostart(self, enabled):
+        """Returns False when Windows keeps it off: a startup task the user
+        turned off in Settings → Apps → Startup can only be turned on there."""
+        if self.packaged:
+            from winrt.windows.applicationmodel import StartupTaskState
+            task = _startup_task()
+            if not enabled:
+                task.disable()
+                return True
+            state = _await(task.request_enable_async())
+            return state in (StartupTaskState.ENABLED, StartupTaskState.ENABLED_BY_POLICY)
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
             if enabled:
                 winreg.SetValueEx(key, APP_ID, 0, winreg.REG_SZ, self.launch_command())
             else:
                 with contextlib.suppress(FileNotFoundError):
                     winreg.DeleteValue(key, APP_ID)
+        return True
 
 
 def _inset(rect, work):
