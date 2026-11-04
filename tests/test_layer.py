@@ -210,6 +210,37 @@ class PackagingTest(unittest.TestCase):
                     self.assertEqual(image.size, size)
                     self.assertEqual(image.mode, "RGBA")
 
+    def test_seed_script_writes_what_the_app_reads(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("seed_script", self.ROOT / "packaging" / "seed.py")
+        seed = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(seed)
+
+        def bundle(level):
+            return {"at": 1.0, "level": level, "painters": [f"Q{n}" for n in range(seed.MIN_PAINTERS)],
+                    "items": [[f"Q{n}", f"File:{n}.jpg"] for n in range(seed.MIN_PAINTINGS)]}
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp, \
+             mock.patch.object(core, "build_fame_bundle", side_effect=bundle), \
+             mock.patch.object(core, "SEED", Path(tmp)), \
+             mock.patch("sys.argv", ["seed.py", "--out", tmp]), \
+             mock.patch("builtins.print"):
+            seed.main()
+            for name in seed.LEVELS:
+                found = core.seed_bundle(core.FAME[name])
+                self.assertEqual(len(found["items"]), seed.MIN_PAINTINGS)
+                self.assertEqual(found["level"], core.FAME[name])
+
+    def test_seed_script_rejects_a_cut_off_answer(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("seed_script", self.ROOT / "packaging" / "seed.py")
+        seed = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(seed)
+        small = {"at": 1.0, "painters": ["Q1"], "items": [["Q2", "File:2.jpg"]]}
+        with mock.patch.object(core, "build_fame_bundle", return_value=small), \
+             mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+            seed.fetch(60, attempts=2, wait=0)
+
 
 if __name__ == "__main__":
     unittest.main()

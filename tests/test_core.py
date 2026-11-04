@@ -241,7 +241,7 @@ class EdgeCaseTest(unittest.TestCase):
              mock.patch.object(museum, "http_json", return_value={"results": {"bindings": []}}):
             with self.assertRaises(ValueError):
                 museum.famous_painters(60)
-            self.assertFalse((Path(tmp) / "pools" / "painters-60.json").exists())
+            self.assertFalse((Path(tmp) / "pools" / "fame-60.json").exists())
 
     def test_crop_fraction(self):
         self.assertAlmostEqual(museum.crop_fraction(3840, 2160, SCREEN), 0)
@@ -267,6 +267,145 @@ class EdgeCaseTest(unittest.TestCase):
             info = {"artist": "A", "title": "Left | Right", "commons": "https://example.org/x"}
             (folder / "CREDITS.md").write_text("| File | Painting |\n| --- | --- |\n" + museum.credit_line("x.jpg", info))
             self.assertEqual(museum.local_credit(folder / "x.jpg"), "A, Left | Right")
+
+
+class FameBundleTest(unittest.TestCase):
+    """The painters of a fame level and their paintings: built-in copy first,
+    refreshed in the background, an old copy used while it refreshes."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(tmp.cleanup)
+        self.cache = Path(tmp.name) / "cache"
+        self.seed = Path(tmp.name) / "seed"
+        for patcher in (mock.patch.object(museum, "CACHE", self.cache), mock.patch.object(museum, "SEED", self.seed),
+                        mock.patch.dict(museum._fame_memory, clear=True), mock.patch.dict(museum._refreshing, clear=True),
+                        mock.patch.dict(museum._refresh_failed, clear=True)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def bundle(tag, at=None):
+        return {"at": time.time() if at is None else at, "level": 60, "painters": [f"Q{tag}"],
+                "items": [[f"Q{tag}0", f"File:{tag}.jpg"]]}
+
+    def write_seed(self, bundle):
+        import gzip
+        self.seed.mkdir(parents=True, exist_ok=True)
+        with gzip.open(museum.seed_path(60), "wt", encoding="utf-8") as handle:
+            json.dump(bundle, handle)
+
+    def wait_for_refresh(self):
+        thread = museum._refreshing.get(60)
+        if thread:
+            thread.join(10)
+
+    def test_the_built_in_copy_is_used_at_once_and_refreshed_behind(self):
+        self.write_seed(self.bundle(1, at=0))
+        started, release = threading.Event(), threading.Event()
+
+        def slow_wikidata(level):
+            started.set()
+            release.wait(5)
+            return self.bundle(2)
+
+        with mock.patch.object(museum, "build_fame_bundle", side_effect=slow_wikidata):
+            self.assertEqual(museum.famous_painters(60), ["Q1"])  # no wait for Wikidata
+            self.assertTrue(started.wait(5))
+            self.assertEqual(museum.fame_bundle(60)["painters"], ["Q1"])  # still refreshing
+            release.set()
+            self.wait_for_refresh()
+        self.assertEqual(museum.fame_bundle(60)["painters"], ["Q2"])
+        self.assertEqual(json.loads(museum.fame_path(60).read_text())["items"], [["Q20", "File:2.jpg"]])
+
+    def test_an_old_copy_is_used_while_it_refreshes(self):
+        museum.write_json(museum.fame_path(60), self.bundle(1, at=time.time() - museum.POOL_MAX_AGE - 5))
+        with mock.patch.object(museum, "build_fame_bundle", return_value=self.bundle(2)) as build:
+            self.assertEqual(museum.famous_painters(60), ["Q1"])
+            self.wait_for_refresh()
+            build.assert_called_once_with(60)
+        self.assertEqual(museum.famous_painters(60), ["Q2"])
+
+    def test_a_fresh_copy_is_not_refreshed(self):
+        museum.write_json(museum.fame_path(60), self.bundle(1))
+        self.write_seed(self.bundle(9))
+        with mock.patch.object(museum, "build_fame_bundle") as build:
+            self.assertEqual(museum.famous_painters(60), ["Q1"])
+        build.assert_not_called()
+        self.assertNotIn(60, museum._refreshing)
+
+    def test_without_any_copy_the_pick_waits_for_wikidata(self):
+        with mock.patch.object(museum, "build_fame_bundle", return_value=self.bundle(3)) as build:
+            self.assertEqual(museum.famous_painters(60), ["Q3"])
+            build.assert_called_once_with(60)
+        self.assertNotIn(60, museum._refreshing)
+        self.assertTrue(museum.fame_path(60).exists())
+
+    def test_a_failed_refresh_keeps_the_old_copy_and_waits_before_retrying(self):
+        self.write_seed(self.bundle(1))
+        with mock.patch.object(museum, "build_fame_bundle", side_effect=ValueError("broken JSON")) as build, \
+             contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(museum.famous_painters(60), ["Q1"])
+            self.wait_for_refresh()
+            self.assertEqual(museum.famous_painters(60), ["Q1"])
+            self.wait_for_refresh()
+        self.assertEqual(build.call_count, 1)
+        self.assertIn("refreshing the painter list failed", err.getvalue())
+        self.assertFalse(museum.fame_path(60).exists())
+
+    def test_a_broken_cached_copy_falls_back_to_the_built_in_one(self):
+        museum.fame_path(60).parent.mkdir(parents=True)
+        museum.fame_path(60).write_text("{\"at\": 1, \"painters\": [")
+        self.write_seed(self.bundle(1))
+        with mock.patch.object(museum, "build_fame_bundle", return_value=self.bundle(2)):
+            self.assertEqual(museum.famous_painters(60), ["Q1"])
+            self.wait_for_refresh()
+
+    def test_building_asks_for_painters_then_their_paintings(self):
+        answers = [{"results": {"bindings": [{"famed": {"value": "http://www.wikidata.org/entity/Q5582"}}]}},
+                   {"results": {"bindings": [{"p": {"value": "http://www.wikidata.org/entity/Q45585"},
+                                              "img": {"value": "http://commons.wikimedia.org/wiki/Special:FilePath/The%20Starry_Night.jpg"}}]}}]
+        with mock.patch.object(museum, "http_json", side_effect=answers) as http:
+            bundle = museum.build_fame_bundle(60)
+        self.assertEqual(bundle["painters"], ["Q5582"])
+        self.assertEqual(bundle["items"], [["Q45585", "File:The Starry Night.jpg"]])
+        self.assertIn("FILTER(?links >= 60)", http.call_args_list[0].kwargs["data"]["query"])
+        self.assertIn("VALUES ?famed { wd:Q5582 }", http.call_args_list[1].kwargs["data"]["query"])
+
+    def test_fame_alone_picks_from_the_bundle_pool(self):
+        self.write_seed(self.bundle(1))
+        config = museum.normalize_config({"fame": "famous"})
+        seen = {}
+
+        def candidates(filters, config, screen):
+            seen["filters"] = dict(filters)
+            seen["pool"] = museum.entity_pool(filters)
+            raise museum.NoMatch("stop")
+
+        with mock.patch.object(museum, "active_filters", return_value=museum.normalize_filters({})), \
+             mock.patch.object(museum, "build_fame_bundle", return_value=self.bundle(2)), \
+             mock.patch.object(museum, "query_pool") as query, \
+             mock.patch.object(museum, "screen_size", return_value=SCREEN), \
+             mock.patch.object(museum, "filtered_candidates", side_effect=candidates):
+            with self.assertRaises(museum.NoMatch):
+                museum.fetch_next(config)
+            self.wait_for_refresh()
+        query.assert_not_called()
+        self.assertEqual(seen["pool"], [["Q10", "File:1.jpg"]])
+        self.assertNotIn("fameArtists", seen["filters"])
+
+    def test_fame_with_years_queries_with_the_bundle_painters(self):
+        museum.write_json(museum.fame_path(60), self.bundle(1))
+        config = museum.normalize_config({"fame": "famous"})
+        with mock.patch.object(museum, "active_filters", return_value=museum.normalize_filters({"yearFrom": 1800})), \
+             mock.patch.object(museum, "query_pool", return_value=[["Q7", "File:7.jpg"]]) as query, \
+             mock.patch.object(museum, "screen_size", return_value=SCREEN), \
+             mock.patch.object(museum, "image_infos", return_value={}), \
+             mock.patch.dict(museum._pools, clear=True):
+            with self.assertRaises(museum.NoMatch):
+                museum.fetch_next(config)
+        self.assertEqual(query.call_args.args[0]["fameArtists"], ["Q1"])
+        self.assertEqual(query.call_args.args[0]["yearFrom"], 1800)
 
 
 class SwitchTest(unittest.TestCase):

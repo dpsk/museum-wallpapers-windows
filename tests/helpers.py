@@ -10,6 +10,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 os.environ["MUSEUM_WALLPAPERS_PLATFORM"] = "dev"
 os.environ.setdefault("MUSEUM_WALLPAPERS_HOME", tempfile.mkdtemp(prefix="museum-wallpapers-test-"))
+# No built-in painter lists unless a test provides them (a local build leaves some in src).
+os.environ["MUSEUM_WALLPAPERS_SEED"] = str(Path(os.environ["MUSEUM_WALLPAPERS_HOME"]) / "no-seed")
 
 from museum_wallpapers import core, framing, platforms, strings  # noqa: E402
 from museum_wallpapers import filelock as filelock_module  # noqa: E402
