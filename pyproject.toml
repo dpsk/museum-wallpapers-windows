@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "museum-wallpapers-windows"
+dynamic = ["version"]
+description = "Endless public-domain paintings from museums worldwide as your Windows wallpaper, with the title, artist and story one click away."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "dpsk" }]
+requires-python = ">=3.10"
+dependencies = [
+    "Pillow>=10.1",
+    "pystray>=0.19.5",
+    "comtypes>=1.4; sys_platform == 'win32'",
+    "windows-toasts>=1.3; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+build = ["pyinstaller>=6.10"]
+
+[project.scripts]
+museum-wallpapers = "museum_wallpapers.__main__:main"
+
+[project.gui-scripts]
+museum-wallpapers-tray = "museum_wallpapers.app:main"
+
+[project.urls]
+Homepage = "https://github.com/dpsk/museum-wallpapers-windows"
+"Omarchy plugin" = "https://github.com/dpsk/omarchy-museum-wallpapers"
+
+[tool.setuptools.dynamic]
+version = { attr = "museum_wallpapers.VERSION" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
