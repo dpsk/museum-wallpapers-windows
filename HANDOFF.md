@@ -24,6 +24,23 @@ selftest` found every module (comtypes, windows_toasts/winrt, pystray._win32,
 tkinter, PIL.ImageTk) and passed all checks; Inno Setup compiled a 15 MB
 installer.
 
+### 0.1.3 — built-in painter lists
+
+The first run spent ~60 s on Wikidata before the first painting: the painter
+list for `fame: famous` (282 painters with 60+ Wikipedias) takes ~28 s, their
+paintings (38 390) another 9–20 s; `known` is 1200 painters and 94 079
+paintings (a 30 MB answer, once seen cut off mid-JSON). Now
+`packaging/seed.py` (run by `build.py`, so every release is fresh) writes
+`fame-<level>.json.gz` (~0.9 MB and ~2.3 MB) into the build; the core's
+`fame_bundle(level)` uses the cached copy in `cache/pools/fame-<level>.json`,
+else the built-in one, and refreshes in a background thread (one at a time,
+`pools/.fame-<level>.lock`) when the cached copy is missing or a week old; a
+failed refresh is retried after 10 minutes and the old copy stays. Only `fame`
+alone uses the bundle's pool; `fame` with years, artists etc. still queries
+Wikidata (with the bundle's painters). The frozen self-test requires the
+built-in data. To be ported to the plugin: section 9 of
+[docs/OMARCHY-PLUGIN-HANDOFF.md](docs/OMARCHY-PLUGIN-HANDOFF.md).
+
 ### 0.1.2 — faster Next, caption fix
 
 Standard thumbnail widths, 6 paintings ready and downloaded two at a time,
@@ -50,7 +67,16 @@ fallback. **To be ported to the Omarchy plugin:**
   open the wallpaper); toasts under the package AUMID; a sign-in start is
   detected from the activation kind.
 - Release flow: bump `VERSION`, CHANGELOG, tag `vX.Y.Z`; upload the release's
-  `-store.msix` to a new Partner Center submission.
+  `-store.msix` to a new Partner Center submission (Update → Packages; the
+  package version must be higher, revision 0). Only one submission can be in
+  progress: 0.1.2.0 went to certification on 2026-11-04, the next one waits
+  until it is published.
+- Ideas queued (2026-11-04): an update check (GitHub Releases for the
+  installer build — download and run the setup silently; `StoreContext`
+  update check for the Store build, which the Store itself updates); a
+  `ru-ru` Store listing (add the language to `<Resources>`); publishing to the
+  Store from CI (msstore CLI / Submission API, needs an Entra ID app linked
+  to Partner Center).
 
 ### Done
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.3 — 2026-11-04
+
+- The first painting appears in seconds instead of about a minute: the lists
+  of famous and known painters and their paintings (38 000 and 94 000) come
+  with the app, about 3 MB, and are refreshed from Wikidata in the background
+  after the start.
+- When these lists are a week old they are refreshed in the background too;
+  a change of painting no longer waits for Wikidata, and a broken answer from
+  it keeps the old lists instead of failing the switch.
+- Pool files in the cache are written compactly (about half the size).
+
 ## 0.1.2 — 2026-11-04
 
 - Faster Next: 6 paintings kept ready (was 3), downloaded two at a time, each

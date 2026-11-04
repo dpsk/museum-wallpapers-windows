@@ -115,6 +115,7 @@ python -m pytest                        # unit tests (any OS; Windows-only ones 
 python -m museum_wallpapers             # the tray app (from src/, or after pip install -e .)
 python -m museum_wallpapers next        # core commands: tick, next, status, keep, filter …
 python -m museum_wallpapers selftest    # what the build can and cannot do
+python packaging/seed.py                # the built-in painter lists (any OS; build.py runs it)
 python packaging/build.py               # Windows only: app + self-test + installer + Store .msix
 ```
 
@@ -131,7 +132,7 @@ Layout:
 | `src/museum_wallpapers/platforms/` | What the OS does: `windows.py` (IDesktopWallpaper, monitors, toasts, autostart), `base.py` (interface + dev stand-in) |
 | `src/museum_wallpapers/framing.py` | Blur / wall / fill framing and the caption, with Pillow |
 | `src/museum_wallpapers/app.py`, `card.py` | Tray icon, menu, scheduler; the card window (Tk) |
-| `packaging/` | PyInstaller spec, build script, Inno Setup installer, MSIX manifest for the Store |
+| `packaging/` | PyInstaller spec, build script, built-in painter lists (`seed.py`), Inno Setup installer, MSIX manifest for the Store |
 | `.github/workflows/build.yml` | Tests on Linux and Windows, builds the installer, attaches it to `v*` releases |
 
 ## License
