@@ -13,6 +13,8 @@
   characters in titles, and switches to a font that has the script (Chinese,
   Japanese, Korean, Indic, Thai) when Georgia does not.
 - The log (`state\museum-wallpapers.log`) records how long each stage took.
+- Paintings without a date on Wikidata no longer show the scan's date as
+  their year, and long titles end on a word.
 
 ## 0.1.1 — 2026-11-04
 
