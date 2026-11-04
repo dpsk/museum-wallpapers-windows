@@ -251,12 +251,14 @@ def read_json(path, fallback=None):
         return fallback
 
 
-def write_json(path, data):
+def write_json(path, data, compact=False):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     # Unique per thread too: the tray app writes from several threads.
     tmp = path.with_name(f"{path.name}.{os.getpid()}-{threading.get_ident()}.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    text = json.dumps(data, ensure_ascii=False, separators=(",", ":")) if compact \
+        else json.dumps(data, ensure_ascii=False, indent=2)
+    tmp.write_text(text, encoding="utf-8")
     _replace(tmp, path)
 
 
@@ -309,7 +311,8 @@ def queue_key(config):
 
 def has_entity_filters(filters):
     """Filters that need the Wikidata pool rather than random Commons scans."""
-    return bool(filters["artists"] or filters["movements"] or filters["genres"] or filters.get("fameArtists"))
+    return bool(filters["artists"] or filters["movements"] or filters["genres"] or filters.get("fameArtists")
+                or filters.get("fameLevel"))
 
 
 @contextlib.contextmanager
@@ -497,22 +500,157 @@ def sparql_query(filters):
     return "\n".join(lines)
 
 
-def famous_painters(min_sitelinks):
-    """Painters with articles in at least this many Wikipedias, cached a week."""
-    path = CACHE / "pools" / f"painters-{min_sitelinks}.json"
-    cached = read_json(path)
-    if isinstance(cached, dict) and time.time() - cached.get("at", 0) < POOL_MAX_AGE:
-        return cached["ids"]
+def painter_ids(min_sitelinks):
+    """Painters with articles in at least this many Wikipedias (~30 s for 60)."""
     query = (f"SELECT ?famed WHERE {{ ?famed wdt:P106 wd:{PAINTER}; wikibase:sitelinks ?links. "
              f"FILTER(?links >= {int(min_sitelinks)}) }}")
     data = http_json(SPARQL_API, data={"query": query}, accept="application/sparql-results+json", timeout=90)
     ids = sorted(row["famed"]["value"].rsplit("/", 1)[-1] for row in data.get("results", {}).get("bindings", []))
     ids = [qid for qid in ids if re.fullmatch(r"Q\d+", qid)]
     if not ids:
-        # Never cache this: an empty list would quietly turn `fame` off for a week.
+        # Never keep this: an empty list would quietly turn `fame` off.
         raise ValueError("Wikidata returned no painters")
-    write_json(path, {"at": time.time(), "ids": ids})
     return ids
+
+
+# The painters of a `fame` level and all their paintings ("fame bundle"),
+# built into each release (packaging/seed.py) so the first painting does not
+# wait 30-60 s for Wikidata. The copy in CACHE/pools is refreshed in the
+# background when missing or older than POOL_MAX_AGE and used meanwhile; only
+# with neither a cached nor a built-in copy does a pick wait for Wikidata.
+SEED = Path(os.environ.get("MUSEUM_WALLPAPERS_SEED") or Path(__file__).resolve().parent / "seed")
+# After a failed background refresh, wait this long before the next try.
+REFRESH_RETRY = 600
+_fame_lock = threading.Lock()
+_fame_memory = {}  # path -> (mtime_ns, bundle): the parsed copy, re-read when the file changes
+_refreshing = {}  # level -> Thread
+_refresh_failed = {}  # level -> time.monotonic() of the last failure
+
+
+def fame_path(level):
+    return CACHE / "pools" / f"fame-{int(level)}.json"
+
+
+def seed_path(level):
+    return SEED / f"fame-{int(level)}.json.gz"
+
+
+def valid_bundle(data):
+    return (isinstance(data, dict) and isinstance(data.get("painters"), list) and bool(data["painters"])
+            and isinstance(data.get("items"), list) and bool(data["items"]))
+
+
+def build_fame_bundle(level):
+    """Ask Wikidata for the painters at this fame level and their paintings."""
+    with timed(f"painter list {level}"):
+        painters = painter_ids(level)
+    filters = normalize_filters({})
+    filters["fameArtists"] = painters
+    with timed(f"painting pool {level}"):
+        items = query_pool(filters)
+    if not items:
+        raise ValueError("Wikidata returned no paintings")
+    return {"at": time.time(), "level": int(level), "painters": painters, "items": items}
+
+
+def _read_bundle(path, opener=open):
+    try:
+        stamp = path.stat().st_mtime_ns
+    except OSError:
+        return None
+    with _fame_lock:
+        remembered = _fame_memory.get(path)
+        if remembered and remembered[0] == stamp:
+            return remembered[1]
+    try:
+        with opener(path, "rt", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError, EOFError):
+        return None
+    if not valid_bundle(data):
+        return None
+    with _fame_lock:
+        _fame_memory[path] = (stamp, data)
+    return data
+
+
+def cached_bundle(level):
+    return _read_bundle(fame_path(level))
+
+
+def seed_bundle(level):
+    return _read_bundle(seed_path(level), gzip.open)
+
+
+def refresh_fame(level):
+    """Rebuild the cached bundle from Wikidata now. One process at a time;
+    returns the bundle, or None when another process is already at it."""
+    held = lock(f"pools/.fame-{int(level)}.lock", wait=False)
+    if held is None:
+        return None
+    with held:
+        bundle = build_fame_bundle(level)
+        write_json(fame_path(level), bundle, compact=True)
+        return bundle
+
+
+def refresh_fame_in_background(level):
+    """Start refresh_fame on a thread unless one is running or failed lately."""
+    with _fame_lock:
+        thread = _refreshing.get(level)
+        if thread and thread.is_alive():
+            return thread
+        failed = _refresh_failed.get(level)
+        if failed is not None and time.monotonic() - failed < REFRESH_RETRY:
+            return None
+
+        def work():
+            try:
+                with timed(f"refresh painters and pool {level}"):
+                    refresh_fame(level)
+            except Exception as exc:  # noqa: BLE001 - the old copy stays in use
+                with _fame_lock:
+                    _refresh_failed[level] = time.monotonic()
+                print(f"museum-wallpapers: refreshing the painter list failed: {exc}", file=sys.stderr)
+
+        thread = threading.Thread(target=work, name=f"refresh-fame-{level}", daemon=True)
+        _refreshing[level] = thread
+        thread.start()
+        return thread
+
+
+def fame_bundle(level):
+    """The painters of a fame level and their paintings, without waiting for
+    Wikidata whenever a cached or built-in copy exists."""
+    bundle = cached_bundle(level)
+    if bundle is not None:
+        with _fame_lock:
+            _fame_memory.pop(seed_path(level), None)  # the built-in copy is no longer needed
+        if time.time() - bundle.get("at", 0) >= POOL_MAX_AGE:
+            refresh_fame_in_background(level)
+        return bundle
+    seed = seed_bundle(level)
+    if seed is not None:
+        refresh_fame_in_background(level)
+        return seed
+    # Nothing to start from (a build without seed data): wait for Wikidata.
+    with timed("painter list and pool (no built-in copy)"), lock(f"pools/.fame-{int(level)}.lock"):
+        bundle = cached_bundle(level)  # another process may have just built it
+        if bundle is None:
+            bundle = build_fame_bundle(level)
+            write_json(fame_path(level), bundle, compact=True)
+        return bundle
+
+
+def famous_painters(min_sitelinks):
+    """Painters with articles in at least this many Wikipedias."""
+    return fame_bundle(min_sitelinks)["painters"]
+
+
+def fame_only(filters):
+    """A pick limited only by the `fame` setting: its bundle has the pool."""
+    return bool(filters.get("fameLevel")) and not (filters["artists"] or filters["movements"] or filters["genres"]) \
+        and filters["yearFrom"] is None and filters["yearTo"] is None
 
 
 def file_title_from_url(url):
@@ -526,6 +664,8 @@ _pools = {}
 def entity_pool(filters):
     """(painting id, Commons file title) pairs for an entity filter, cached a
     week on disk and kept in memory for the rest of the run."""
+    if fame_only(filters):
+        return fame_bundle(filters["fameLevel"])["items"]
     path = CACHE / "pools" / f"{filter_key(filters)}.json"
     if path in _pools:
         return _pools[path]
@@ -533,17 +673,22 @@ def entity_pool(filters):
     return items
 
 
-def _load_pool(path, filters):
-    pool = read_json(path)
-    if isinstance(pool, dict) and time.time() - pool.get("at", 0) < POOL_MAX_AGE:
-        return pool["items"]
+def query_pool(filters):
     data = http_json(SPARQL_API, data={"query": sparql_query(filters)},
                      accept="application/sparql-results+json", timeout=90)
     items = []
     for row in data.get("results", {}).get("bindings", []):
         qid = row["p"]["value"].rsplit("/", 1)[-1]
         items.append([qid, file_title_from_url(row["img"]["value"])])
-    write_json(path, {"at": time.time(), "items": items})
+    return items
+
+
+def _load_pool(path, filters):
+    pool = read_json(path)
+    if isinstance(pool, dict) and time.time() - pool.get("at", 0) < POOL_MAX_AGE:
+        return pool["items"]
+    items = query_pool(filters)
+    write_json(path, {"at": time.time(), "items": items}, compact=True)
     return items
 
 
@@ -899,7 +1044,9 @@ def fetch_next(config, unfiltered=False, note=None):
         raise NoMatch("unknown filter value: " + ", ".join(unknown))
     # An explicit artist (or "More by …") is shown however famous they are.
     if config["fame"] != "any" and not filters["artists"]:
-        filters["fameArtists"] = famous_painters(FAME[config["fame"]])
+        filters["fameLevel"] = FAME[config["fame"]]
+        if not fame_only(filters):
+            filters["fameArtists"] = famous_painters(filters["fameLevel"])
     QUEUE.mkdir(parents=True, exist_ok=True)
     current = current_painting()
     repeats, current_matched, queued_matched = [], False, False
@@ -1270,7 +1417,8 @@ def lock(name=".lock", wait=True):
     processes, never pick the same painting; a switch that finds the queue
     empty waits for a download in flight rather than starting its own. The locks exclude threads of the tray app as well as
     other processes (a command line run beside it).
-    `.save.lock` serializes Save, `.settings.lock` settings.json edits."""
+    `.save.lock` serializes Save, `.settings.lock` settings.json edits.
+    `pools/.fame-<level>.lock` keeps one refresh of a fame bundle at a time."""
     return filelock.acquire(CACHE / name, wait=wait)
 
 

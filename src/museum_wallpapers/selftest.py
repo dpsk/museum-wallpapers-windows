@@ -8,6 +8,7 @@ import importlib
 import json
 import platform
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -52,6 +53,20 @@ def run(out=None):
                                "family": getattr(sys.modules.get(type(core.PLATFORM).__module__), "PACKAGE_FAMILY", None),
                                "aumid": getattr(sys.modules.get(type(core.PLATFORM).__module__), "PACKAGED_AUMID", None)})
     check("autostart", lambda: core.PLATFORM.autostart_enabled())
+    def seed():
+        found = {}
+        for name in ("famous", "known"):
+            bundle = core.seed_bundle(core.FAME[name])
+            if bundle is None:
+                if report["frozen"]:  # a release must carry it: the first painting waits otherwise
+                    raise FileNotFoundError(str(core.seed_path(core.FAME[name])))
+                found[name] = None
+                continue
+            found[name] = {"painters": len(bundle["painters"]), "paintings": len(bundle["items"]),
+                           "at": time.strftime("%Y-%m-%d", time.gmtime(bundle.get("at", 0)))}
+        return found
+
+    check("seed", seed)
     check("settings", lambda: {k: v for k, v in core.load_config().items() if k != "filters"})
 
     def frame():
