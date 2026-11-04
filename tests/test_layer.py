@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from helpers import FakePlatform, Monitor, core, filelock_module, framing, platforms, strings
+from museum_wallpapers import resources
 
 
 class SettingsTest(unittest.TestCase):
@@ -158,6 +159,37 @@ class CaptionTest(unittest.TestCase):
 
     def test_crop_fraction(self):
         self.assertAlmostEqual(framing.crop_fraction(3840, 2160, (3840, 2160)), 0)
+
+
+class PackagingTest(unittest.TestCase):
+    """The Store package's manifest and images (built on Windows by packaging/build.py)."""
+
+    ROOT = Path(__file__).resolve().parent.parent
+
+    def test_manifest(self):
+        import re
+        import xml.etree.ElementTree as ET
+        text = (self.ROOT / "packaging" / "AppxManifest.xml").read_text(encoding="utf-8")
+        root = ET.fromstring(text.replace("{VERSION}", "0.1.1.0"))
+        ns = {"m": "http://schemas.microsoft.com/appx/manifest/foundation/windows10",
+              "desktop": "http://schemas.microsoft.com/appx/manifest/desktop/windows10"}
+        identity = root.find("m:Identity", ns)
+        self.assertEqual(identity.get("Name"), "dpsk.MuseumWallpapers")
+        self.assertTrue(identity.get("Publisher").startswith("CN="))
+        task = root.find(".//desktop:StartupTask", ns)
+        windows_py = (self.ROOT / "src" / "museum_wallpapers" / "platforms" / "windows.py").read_text(encoding="utf-8")
+        self.assertIn(f'STARTUP_TASK_ID = "{task.get("TaskId")}"', windows_py)
+        for logo in re.findall(r'(Assets\\[\w.]+\.png)', text):
+            self.assertIn(logo.split("\\")[1], resources.MSIX_ASSETS)
+
+    def test_assets(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            folder = resources.write_msix_assets(tmp)
+            for name, size in resources.MSIX_ASSETS.items():
+                with Image.open(folder / name) as image:
+                    self.assertEqual(image.size, size)
+                    self.assertEqual(image.mode, "RGBA")
 
 
 if __name__ == "__main__":
