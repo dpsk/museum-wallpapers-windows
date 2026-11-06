@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.5 — 2026-11-06
+
+From the Omarchy plugin's 0.1.3–0.1.4:
+
+- The interface speaks ten languages: English, Русский, Українська, Deutsch,
+  Français, Español, Italiano, Nederlands, Polski, Português — menu, card,
+  notifications and error messages. Any other language gets an English
+  interface, with titles and stories still in that language.
+- Paintings described in your language come first: **Paintings described in
+  my language** (show them first / only them / no preference) and
+  **Described means** (a title in your language, or a Wikipedia article in
+  it). For Russian only about a fifth of the famous painters' works have a
+  Russian title, so the default puts those first.
+- The card has a gear that opens the settings, the same list as the tray
+  menu, and a longer story (Wikipedia's first six sentences instead of four;
+  Commons descriptions up to 600 characters).
+
 ## 0.1.4 — 2026-11-06
 
 From the Omarchy plugin's 0.1.2:

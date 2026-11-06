@@ -23,7 +23,9 @@ Website: **[nikaliuk.in](https://nikaliuk.in/)**
 - **Famous painters first.** By default only the ~280 painters covered by 60+
   Wikipedias; widen it to ~1200 or to everyone.
 - **In your language.** Titles and stories from the Wikipedia in your Windows
-  language (or any you pick); the app itself speaks English and Russian.
+  language (or any you pick), paintings described in it shown first; the app
+  itself speaks English, Russian, Ukrainian, German, French, Spanish,
+  Italian, Dutch, Polish and Portuguese.
 
 ## Install
 
@@ -47,7 +49,7 @@ Wikimedia.
 | Do | What happens |
 | --- | --- |
 | Hover the tray icon | Title and artist |
-| Click the tray icon | The card: preview, title, artist, museum, story, **Next**, **Read more**, **Save**, **More by …** |
+| Click the tray icon | The card: preview, title, artist, museum, story, **Next**, **Read more**, **Save**, **More by …**; the gear opens the settings |
 | Right-click the tray icon | Next painting, Read more, Save, and all settings |
 | Open *Museum Wallpapers* from the Start menu while it runs | Opens the card |
 
@@ -65,7 +67,9 @@ All of these are in the tray menu; they are stored in
 | `fame` | `"famous"` | Artists | `famous` (~280 painters), `known` (~1200) or `any` |
 | `fit` | `"blur"` | Paintings that are not widescreen | `blur` (framed by a blurred copy of itself), `auto` (fill unless that crops more than 10%), `wall` (on a dark wall), `cover` (fill and crop) |
 | `caption` | `"bottom-right"` | Caption on wallpaper | `off`, `bottom-right`, `bottom-left`, `top-right`, `top-left` |
-| `language` | `"auto"` | Language | Wikipedia language for titles and stories; `auto` follows Windows |
+| `language` | `"auto"` | Language | Wikipedia language for titles and stories, and the interface language; `auto` follows Windows. A language without an interface translation gets an English interface |
+| `localized` | `"prefer"` | Paintings described in my language | `prefer` shows them first, `only` shows only them, `all` has no preference |
+| `localizedBy` | `"title"` | Described means | `title`: Wikidata has the painting's title in your language; `article`: Wikipedia has an article about it |
 | `notifyOnChange` | `false` | Notify when it changes | A notification with the painting each time it changes |
 | `saveDir` | `Pictures\Museum Wallpapers` | Open collection folder | Where **Save** puts paintings; also the offline fallback |
 | `prefetchCount` | `6` | | Paintings downloaded (and framed) ahead, so **Next** is instant |

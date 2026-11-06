@@ -24,6 +24,20 @@ selftest` found every module (comtypes, windows_toasts/winrt, pystray._win32,
 tkinter, PIL.ImageTk) and passed all checks; Inno Setup compiled a 15 MB
 installer.
 
+### 0.1.5 — ten languages, language preference (GitHub issue #2)
+
+From the plugin's 0.1.3–0.1.4: `strings.py` has ten tables (the plugin's
+`strings.json` texts for shared keys: errors, Saved, About the artist, nm_*;
+Windows-only keys translated here); `t()` falls back per key and on a broken
+placeholder; interval labels are `interval_<minutes>` keys (no plural code).
+Core messages (NoMatch, switch errors, About the artist) follow the language.
+`localized`/`localizedBy` settings, `described_in`/`prefer_described` in
+`fetch_next`, `only` relaxed to `prefer` in the unfiltered fallback,
+`queue_key` includes them only for `only` — as in the plugin. The card's
+gear (`Card._settings_menu`) pops up the same list as the tray menu, both
+built from `App.settings_spec()`. Summary 6 sentences / 600 characters, card
+limit 900 characters.
+
 ### 0.1.4 — back from the plugin
 
 The plugin's 0.1.2 (2026-11-06, ported from docs/OMARCHY-PLUGIN-HANDOFF.md
