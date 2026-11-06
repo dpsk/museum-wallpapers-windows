@@ -2,6 +2,7 @@
 
 import json
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -240,6 +241,17 @@ class PackagingTest(unittest.TestCase):
         with mock.patch.object(core, "build_fame_bundle", return_value=small), \
              mock.patch("sys.stderr"), self.assertRaises(SystemExit):
             seed.fetch(60, attempts=2, wait=0)
+
+
+class ProcessAliveTest(unittest.TestCase):
+    @unittest.skipIf(sys.platform == "win32", "POSIX probe; Windows has its own (test_windows)")
+    def test_posix_probe(self):
+        import subprocess
+        from museum_wallpapers import platforms
+        self.assertTrue(platforms.Platform.process_alive(os.getpid()))
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        child.wait()
+        self.assertFalse(platforms.Platform.process_alive(child.pid))
 
 
 if __name__ == "__main__":

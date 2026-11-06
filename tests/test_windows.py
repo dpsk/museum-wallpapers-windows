@@ -27,6 +27,14 @@ class WindowsHelpersTest(unittest.TestCase):
         guid = windows.GUID.parse(windows.FOLDERID_PICTURES)
         self.assertEqual(guid.Data1, 0x33E28130)
 
+    def test_process_alive(self):
+        import subprocess
+        self.assertTrue(windows.WindowsPlatform.process_alive(os.getpid()))
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        child.wait()
+        self.assertFalse(windows.WindowsPlatform.process_alive(child.pid))
+        self.assertFalse(windows.WindowsPlatform.process_alive(999999999))
+
     def test_launch_command(self):
         command = windows.WindowsPlatform.launch_command()
         self.assertTrue(command.endswith("--background"))

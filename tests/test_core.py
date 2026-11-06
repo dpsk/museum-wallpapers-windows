@@ -873,6 +873,85 @@ class SwitchTest(unittest.TestCase):
         self.assertEqual(museum.thumb_width(5120), 3840)
         for width in (800, 1366, 1600, 2560, 3440, 3840, 7680):
             self.assertIn(museum.thumb_width(width), museum.THUMB_STEPS)
+        # Height counts too: a 2:1 painting must cover a 5:4 screen's height.
+        self.assertEqual(museum.thumb_width((1280, 1024), 2.0), 3840)  # needs 2048 px
+        self.assertEqual(museum.thumb_width((1280, 1024), 1.3), 1280)
+        self.assertEqual(museum.thumb_width((1920, 1080), 1.5), 1920)
+        self.assertEqual(museum.thumb_width((3840, 2160), 2.0), 3840)
+
+    def test_thumbnail_covers_every_monitor(self):
+        page = {"imageinfo": [{"width": 6000, "height": 4000}]}  # 3:2
+        self.platform._monitors = [Monitor("wide", 1920, 1080, (0, 0, 0, 0))]
+        self.assertEqual(museum.thumb_width_for(page), 1920)
+        # A portrait monitor beside it: 1920 px high needs 2880 px of a 3:2 painting.
+        self.platform._monitors.append(Monitor("tall", 1080, 1920, (0, 0, 0, 0)))
+        self.assertEqual(museum.thumb_width_for(page), 3840)
+
+    def test_candidates_are_checked_without_extmetadata(self):
+        answer = {"query": {"pages": [{"title": "File:A.jpg", "pageid": 1,
+                                       "imageinfo": [{"width": 4000, "height": 2500}]}]}}
+        with mock.patch.object(museum, "mw_api", return_value=answer) as api:
+            museum.image_infos(["File:A.jpg"])
+        self.assertEqual(api.call_args.kwargs["iiprop"], "size|url")
+        self.assertNotIn("iiextmetadatafilter", api.call_args.kwargs)
+
+    def test_describe_fetches_metadata_for_the_picked_painting_only(self):
+        page = {"pageid": 7, "title": "File:X.jpg",
+                "imageinfo": [{"width": 4000, "height": 2500, "descriptionurl": "https://commons.example/X"}]}
+        meta = {"ObjectName": {"value": "The\u200b Wave"}}
+        with mock.patch.object(museum, "file_metadata", return_value=meta) as file_metadata, \
+             mock.patch.object(museum, "entities", return_value={}), \
+             mock.patch.object(museum, "http_json", side_effect=OSError("offline")):
+            info = museum.describe(page, "Q1", "en")
+        file_metadata.assert_called_once_with(7)
+        self.assertEqual(info["title"], "The Wave")  # invisible characters dropped
+
+    def test_one_pool_query_for_concurrent_callers(self):
+        filters = museum.normalize_filters({"artists": ["Q296"]})
+        path = self.cache / "pools" / "test.json"
+        started = threading.Barrier(3)
+        calls = []
+
+        def slow_query(_filters):
+            calls.append(1)
+            time.sleep(0.2)
+            return [["Q1", "File:A.jpg"]]
+
+        def load():
+            started.wait()
+            return museum._load_pool(path, filters)
+
+        with mock.patch.object(museum, "query_pool", side_effect=slow_query):
+            threads = [threading.Thread(target=load) for _ in range(3)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(len(calls), 1)
+
+    def test_claims_of_dead_processes_are_not_waited_for(self):
+        queue = self.cache / "queue"
+        queue.mkdir(exist_ok=True)
+        key = museum.queue_key(self.config)
+        museum.write_json(queue / "commons-8.json", {"filter": key, "claimedBy": 999999999})
+        with mock.patch.object(self.platform, "process_alive", return_value=False):
+            self.assertEqual(museum.in_flight(key), 0)
+        with mock.patch.object(self.platform, "process_alive", return_value=True):
+            self.assertEqual(museum.in_flight(key), 1)
+        self.assertTrue(museum.alive(os.getpid()))
+        self.assertTrue(museum.alive(None))  # unknown counts as running
+
+    def test_a_dead_claim_frees_its_painting_at_once(self):
+        queue = self.cache / "queue"
+        queue.mkdir(exist_ok=True)
+        claim = queue / "commons-9.json"
+        museum.write_json(claim, {"filter": "k", "claimedBy": 999999999})
+        with mock.patch.object(self.platform, "process_alive", return_value=True):
+            museum.queued(self.config)
+        self.assertTrue(claim.exists())
+        with mock.patch.object(self.platform, "process_alive", return_value=False):
+            museum.queued(self.config)
+        self.assertFalse(claim.exists())
 
     def test_queued_paintings_are_framed_ahead_and_kept(self):
         key = museum.queue_key(self.config)
