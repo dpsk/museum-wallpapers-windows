@@ -7,6 +7,8 @@ has the same keys and placeholders as English (tests/test_layer.py)."""
 
 STRINGS = {
     "en": {
+        "two_copies_title": "Two copies of Museum Wallpapers",
+        "two_copies": "Besides the Microsoft Store version, the one from GitHub is installed, and Windows may start that older copy instead. Uninstall it: press Win+R and run %LOCALAPPDATA%\\Programs\\Museum Wallpapers\\unins000.exe",
         "app": "Museum Wallpapers",
         "about": "About this painting",
         "next": "Next painting",
@@ -79,6 +81,8 @@ STRINGS = {
         "err_background": "Could not set the background: {detail}",
     },
     "ru": {
+        "two_copies_title": "Установлены две копии Museum Wallpapers",
+        "two_copies": "Кроме версии из Microsoft Store, установлена версия с GitHub, и при входе в Windows может запуститься она. Удалите её: нажмите Win+R и выполните %LOCALAPPDATA%\\Programs\\Museum Wallpapers\\unins000.exe",
         "app": "Museum Wallpapers",
         "about": "Об этой картине",
         "next": "Следующая картина",
@@ -151,6 +155,8 @@ STRINGS = {
         "err_background": "Не удалось поставить обои: {detail}",
     },
     "uk": {
+        "two_copies_title": "Встановлено дві копії Museum Wallpapers",
+        "two_copies": "Окрім версії з Microsoft Store, встановлено версію з GitHub, і під час входу у Windows може запуститися вона. Видаліть її: натисніть Win+R і виконайте %LOCALAPPDATA%\\Programs\\Museum Wallpapers\\unins000.exe",
         "app": "Museum Wallpapers",
         "about": "Про цю картину",
         "next": "Наступна картина",
@@ -223,6 +229,8 @@ STRINGS = {
         "err_background": "Не вдалося встановити шпалери: {detail}",
     },
     "de": {
+        "two_copies_title": "Museum Wallpapers ist zweimal installiert",
+        "two_copies": "Neben der Version aus dem Microsoft Store ist die von GitHub installiert, und Windows startet womöglich diese ältere Kopie. Deinstallieren Sie sie: Win+R drücken und %LOCALAPPDATA%\\Programs\\Museum Wallpapers\\unins000.exe ausführen",
         "app": "Museum Wallpapers",
         "about": "Über dieses Gemälde",
         "next": "Nächstes Gemälde",
@@ -295,6 +303,8 @@ STRINGS = {
         "err_background": "Hintergrund konnte nicht gesetzt werden: {detail}",
     },
     "fr": {
+        "two_copies_title": "Museum Wallpapers est installé deux fois",
+        "two_copies": "En plus de la version du Microsoft Store, celle de GitHub est installée, et Windows peut lancer cette ancienne copie à la place. Désinstallez-la : appuyez sur Win+R et exécutez %LOCALAPPDATA%\\Programs\\Museum Wallpapers\\unins000.exe",
         "app": "Museum Wallpapers",
         "about": "À propos de ce tableau",
         "next": "Tableau suivant",
@@ -367,6 +377,8 @@ STRINGS = {
         "err_background": "Impossible de changer le fond d’écran : {detail}",
     },
     "es": {
+        "two_copies_title": "Museum Wallpapers está instalado dos veces",
+        "two_copies": "Además de la versión de Microsoft Store está instalada la de GitHub, y Windows puede iniciar esa copia antigua en su lugar. Desinstálala: pulsa Win+R y ejecuta %LOCALAPPDATA%\\Programs\\Museum Wallpapers\\unins000.exe",
         "app": "Museum Wallpapers",
         "about": "Sobre este cuadro",
         "next": "Siguiente cuadro",
@@ -439,6 +451,8 @@ STRINGS = {
         "err_background": "No se pudo poner el fondo: {detail}",
     },
     "it": {
+        "two_copies_title": "Museum Wallpapers è installato due volte",
+        "two_copies": "Oltre alla versione del Microsoft Store è installata quella di GitHub, e Windows potrebbe avviare quella copia più vecchia. Disinstallala: premi Win+R ed esegui %LOCALAPPDATA%\\Programs\\Museum Wallpapers\\unins000.exe",
         "app": "Museum Wallpapers",
         "about": "Su questo dipinto",
         "next": "Dipinto successivo",
@@ -511,6 +525,8 @@ STRINGS = {
         "err_background": "Impossibile impostare lo sfondo: {detail}",
     },
     "nl": {
+        "two_copies_title": "Museum Wallpapers is twee keer geïnstalleerd",
+        "two_copies": "Naast de versie uit de Microsoft Store is die van GitHub geïnstalleerd, en Windows start mogelijk die oudere kopie. Verwijder die: druk op Win+R en voer %LOCALAPPDATA%\\Programs\\Museum Wallpapers\\unins000.exe uit",
         "app": "Museum Wallpapers",
         "about": "Over dit schilderij",
         "next": "Volgend schilderij",
@@ -583,6 +599,8 @@ STRINGS = {
         "err_background": "Achtergrond instellen mislukt: {detail}",
     },
     "pl": {
+        "two_copies_title": "Museum Wallpapers jest zainstalowane dwa razy",
+        "two_copies": "Oprócz wersji ze sklepu Microsoft Store zainstalowana jest wersja z GitHuba i Windows może uruchamiać tę starszą kopię. Odinstaluj ją: naciśnij Win+R i uruchom %LOCALAPPDATA%\\Programs\\Museum Wallpapers\\unins000.exe",
         "app": "Museum Wallpapers",
         "about": "O tym obrazie",
         "next": "Następny obraz",
@@ -655,6 +673,8 @@ STRINGS = {
         "err_background": "Nie udało się ustawić tapety: {detail}",
     },
     "pt": {
+        "two_copies_title": "Museum Wallpapers está instalado duas vezes",
+        "two_copies": "Além da versão da Microsoft Store, a do GitHub está instalada, e o Windows pode iniciar essa cópia antiga no lugar. Desinstale-a: pressione Win+R e execute %LOCALAPPDATA%\\Programs\\Museum Wallpapers\\unins000.exe",
         "app": "Museum Wallpapers",
         "about": "Sobre esta pintura",
         "next": "Próxima pintura",

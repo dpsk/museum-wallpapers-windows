@@ -101,10 +101,12 @@ DEFAULTS = {
     "prefetchCount": 6,
     "fit": "blur",
     "fame": "famous",
-    # Paintings with a title (or a Wikipedia article) in the chosen language:
-    # shown first ("prefer"), exclusively ("only"), or no preference ("all").
-    "localized": "prefer",
-    "localizedBy": "title",
+    # Paintings with a Wikipedia article (or only a title) in the chosen
+    # language: exclusively ("only"), first ("prefer"), or no preference ("all").
+    # The default keeps the story in your language: of the famous painters'
+    # 38 390 paintings, 2 115 have a Russian article, 3 961 an English one.
+    "localized": "only",
+    "localizedBy": "article",
     "minRatio": 1.3,
     "maxRatio": 2.0,
 }

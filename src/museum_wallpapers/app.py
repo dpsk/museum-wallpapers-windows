@@ -6,6 +6,7 @@ import argparse
 import datetime
 import sys
 import threading
+import time
 import traceback
 
 from . import APP_NAME, VERSION, card, core, resources, strings
@@ -66,7 +67,36 @@ class App:
 
     # -- start and stop
 
+    def two_copies(self):
+        """Both the Store package and the installer's copy are installed.
+        The installer's copy steps aside: no autostart, and a launch opens the
+        Store app instead (returns True: exit). The Store copy cannot remove
+        the other one (its registry writes are virtualized), so it says once
+        a day how to uninstall it."""
+        try:
+            other = self.platform.other_copy()
+        except OSError:
+            return False
+        if not other:
+            return False
+        if not self.platform.packaged:
+            try:
+                self.platform.set_autostart(False)
+            except OSError as exc:
+                print(f"museum-wallpapers: could not turn off autostart: {exc}", file=sys.stderr)
+            if not self.background:
+                self.platform.launch_store_app()
+            return True
+        stamp = core.STATE / "two-copies.json"
+        if time.time() - core.read_json(stamp, {}).get("at", 0) >= 86400:
+            core.write_json(stamp, {"at": time.time()})
+            config = core.load_config()
+            core.notify(strings.t("two_copies_title", config), strings.t("two_copies", config))
+        return False
+
     def run(self):
+        if self.two_copies():
+            return 0
         # Before anything touches shared files: a second launch only asks
         # the running app to open its card.
         if self.platform.name == "windows":
