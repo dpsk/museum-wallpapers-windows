@@ -46,6 +46,8 @@ WAIT_OBJECT_0 = 0
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 APPMODEL_ERROR_NO_PACKAGE = 15700
 STARTUP_TASK_ID = "MuseumWallpapersStartup"  # as in packaging/AppxManifest.xml
+# The Store package's family name (identity in packaging/AppxManifest.xml).
+STORE_FAMILY = "dpsk.MuseumWallpapers_9n62pad56wkq8"
 FOLDERID_PICTURES = "{33E28130-4E1E-4676-835A-98395C3BC3BB}"
 
 CLSID_DESKTOP_WALLPAPER = "{C2CF3110-460E-4fc1-B9D0-8A1C0C9CC4BD}"
@@ -492,6 +494,19 @@ class WindowsPlatform(Platform):
             return code.value == STILL_ACTIVE
         finally:
             kernel32.CloseHandle(handle)
+
+    def other_copy(self):
+        """Both the installer's copy and the Store package installed: they
+        share the single-instance mutex, so whichever starts first at sign-in
+        wins, often the older installer copy."""
+        local = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+        other = (local / "Programs" / APP_NAME / "MuseumWallpapers.exe") if self.packaged \
+            else (local / "Packages" / STORE_FAMILY)
+        return other if other.exists() else None
+
+    def launch_store_app(self):
+        import subprocess
+        subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{STORE_FAMILY}!App"])
 
     def launched_at_startup(self):
         """Started by the package's StartupTask at sign-in (MSIX only; the

@@ -111,6 +111,15 @@ class Platform:
             return True
         return True
 
+    def other_copy(self):
+        """The other installation of the app, if there is one: the installer's
+        folder seen from the Store package, the Store package's data folder
+        seen from the installer's copy."""
+        return None
+
+    def launch_store_app(self):
+        """Start the Store copy (the installer's copy hands over to it)."""
+
     def launched_at_startup(self):
         """Started automatically at sign-in rather than by the user."""
         return False
