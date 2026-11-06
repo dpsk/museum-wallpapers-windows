@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.4 — 2026-11-06
+
+From the Omarchy plugin's 0.1.2:
+
+- A search for the next painting is about ten times faster: candidates are
+  checked by size alone, and Commons' file description is fetched only for
+  the painting picked (asking for it for 50 candidates took 7.6 s instead of
+  0.6 s).
+- Thumbnails are wide enough to cover the screen's height too, so a wide
+  painting on a 5:4 or portrait monitor is no longer upscaled.
+- Several downloads that need the same filtered painting pool ask Wikidata
+  once instead of each running the ~20 s query.
+- A download claimed by a process that has since quit no longer holds up
+  Next or keeps its painting reserved.
+- Titles in the card and notifications lose invisible and odd space
+  characters, as the caption already did.
+
 ## 0.1.3 — 2026-11-04
 
 - The first painting appears in seconds instead of about a minute: the lists

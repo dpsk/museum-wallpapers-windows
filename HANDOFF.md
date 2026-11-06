@@ -24,6 +24,21 @@ selftest` found every module (comtypes, windows_toasts/winrt, pystray._win32,
 tkinter, PIL.ImageTk) and passed all checks; Inno Setup compiled a 15 MB
 installer.
 
+### 0.1.4 — back from the plugin
+
+The plugin's 0.1.2 (2026-11-06, ported from docs/OMARCHY-PLUGIN-HANDOFF.md
+on a MacBook) added improvements of its own; these came back here:
+`image_infos` without `extmetadata` and `file_metadata(pageid)` in
+`describe` (measured: 50 files 7.6 s → 0.6 s); `thumb_width(screen, ratio)`
+covering the height, `thumb_width_for(page)` over all monitors; one
+`_load_pool` query at a time (`pools/.<key>.lock`); `alive(pid)` for claims
+(`Platform.process_alive`: `os.kill(pid, 0)` on POSIX, OpenProcess +
+GetExitCodeProcess on Windows — never `os.kill` there, it terminates);
+`clean_text` on titles in `describe`. Not ported, already covered or
+plugin-only: screen size in framed names / refit on a new screen (Windows
+had per-monitor names and `screens_key`), keeping the previous framed copy
+for the shell's cross-fade, detached helpers logging to the journal.
+
 ### 0.1.3 — built-in painter lists
 
 The first run spent ~60 s on Wikidata before the first painting: the painter
