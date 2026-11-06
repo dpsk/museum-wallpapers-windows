@@ -12,6 +12,7 @@ from unittest import mock
 
 from helpers import FakePlatform, Monitor, make_jpeg
 from helpers import core as museum
+from museum_wallpapers import strings
 
 CONFIG = museum.normalize_config({})
 SCREEN = (3840, 2160)
@@ -886,6 +887,85 @@ class SwitchTest(unittest.TestCase):
         # A portrait monitor beside it: 1920 px high needs 2880 px of a 3:2 painting.
         self.platform._monitors.append(Monitor("tall", 1080, 1920, (0, 0, 0, 0)))
         self.assertEqual(museum.thumb_width_for(page), 3840)
+
+    def test_language_preference_orders_or_narrows_candidates(self):
+        found = [({"pageid": 1}, "Q1"), ({"pageid": 2}, "Q2"), ({"pageid": 3}, "Q3")]
+        answer = {"Q1": {"labels": {}, "sitelinks": {}},
+                  "Q2": {"labels": {"ru": {"value": "Девятый вал"}}, "sitelinks": {}},
+                  "Q3": {"labels": {"ru": {"value": "Гадалка"}}, "sitelinks": {"ruwiki": {"title": "Гадалка"}}}}
+        prefer = museum.normalize_config({"language": "ru", "localized": "prefer"})
+        only = museum.normalize_config({"language": "ru", "localized": "only"})
+        by_article = museum.normalize_config({"language": "ru", "localized": "only", "localizedBy": "article"})
+        with mock.patch.object(museum, "entities", return_value=answer) as asked:
+            self.assertEqual([q for _, q in museum.prefer_described(found, prefer)], ["Q2", "Q3", "Q1"])
+            self.assertEqual([q for _, q in museum.prefer_described(found, only)], ["Q2", "Q3"])
+            self.assertEqual([q for _, q in museum.prefer_described(found, by_article)], ["Q3"])
+        self.assertEqual(asked.call_args.kwargs, {"props": "labels|sitelinks", "languages": "ru", "site": "ruwiki"})
+        everyone = museum.normalize_config({"localized": "all"})
+        self.assertEqual(museum.prefer_described(found, everyone), found)
+        with mock.patch.object(museum, "entities", side_effect=OSError("offline")), \
+             contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(museum.prefer_described(found, only), found)  # no answer: no preference
+
+    def test_language_preference_settings(self):
+        config = museum.normalize_config({})
+        self.assertEqual((config["localized"], config["localizedBy"]), ("prefer", "title"))
+        odd = museum.normalize_config({"localized": "never", "localizedBy": 3})
+        self.assertEqual((odd["localized"], odd["localizedBy"]), ("prefer", "title"))
+        self.assertNotEqual(museum.queue_key(museum.normalize_config({"localized": "only"})),
+                            museum.queue_key(museum.normalize_config({"localized": "all"})))
+        # "prefer" and "all" may queue the same paintings.
+        self.assertEqual(museum.queue_key(museum.normalize_config({"localized": "prefer"})),
+                         museum.queue_key(museum.normalize_config({"localized": "all"})))
+
+    def test_unknown_wiki_means_no_answer(self):
+        config = museum.normalize_config({"language": "nb", "localized": "only", "localizedBy": "article"})
+        unfiltered = {"Q1": {"sitelinks": {"enwiki": {}, "nowiki": {}}}}  # sitefilter ignored
+        with mock.patch.object(museum, "entities", return_value=unfiltered):
+            self.assertIsNone(museum.described_in({"Q1"}, config))
+        with mock.patch.object(museum, "entities", return_value={}):
+            self.assertIsNone(museum.described_in({"Q1"}, config))
+
+    def test_english_titles_need_no_check(self):
+        found = [({"pageid": 1}, "Q1")]
+        with mock.patch.object(museum, "described_in", side_effect=AssertionError("asked")):
+            self.assertEqual(museum.prefer_described(found, museum.normalize_config({"language": "en"})), found)
+
+    def test_only_blames_the_language_only_when_it_dropped_something(self):
+        page = {"pageid": 7, "title": "File:X.jpg", "imageinfo": [{"width": 4000, "height": 2500}]}
+        only = museum.normalize_config({"saveDir": self.config["saveDir"], "fit": "cover", "fame": "any",
+                                        "language": "ru", "localized": "only"})
+        filters = museum.normalize_filters({"artists": ["Q296"]})
+        with mock.patch.object(museum, "active_filters", return_value=filters), \
+             mock.patch.object(museum, "resolve_filters", return_value=(filters, [])), \
+             mock.patch.object(museum, "entity_pool", return_value=[["Q1", "File:X.jpg"]]):
+            with mock.patch.object(museum, "filtered_candidates", return_value=[(page, "Q1")]), \
+                 mock.patch.object(museum, "described_in", return_value=set()):
+                with self.assertRaises(museum.NoMatch) as caught:
+                    museum.fetch_next(only)
+                self.assertEqual(str(caught.exception), strings.t("nm_localized", "ru"))
+            with mock.patch.object(museum, "filtered_candidates", return_value=[]):
+                with self.assertRaises(museum.NoMatch) as caught:
+                    museum.fetch_next(only)
+                self.assertEqual(str(caught.exception), strings.t("nm_too_small", "ru"))
+
+    def test_the_fallback_relaxes_only(self):
+        page = {"pageid": 7, "title": "File:X.jpg", "imageinfo": [{"width": 4000, "height": 2500}]}
+        only = museum.normalize_config({"saveDir": self.config["saveDir"], "fit": "cover", "fame": "any",
+                                        "language": "ru", "localized": "only"})
+        with mock.patch.object(museum, "random_candidates", return_value=[(page, "Q1")]), \
+             mock.patch.object(museum, "described_in", return_value=set()), \
+             mock.patch.object(museum, "enqueue", return_value=self.cache / "queue" / "commons-7.jpg") as enqueue:
+            museum.fetch_next(only, unfiltered=True)
+        enqueue.assert_called_once()
+        self.assertEqual(enqueue.call_args.args[3], museum.queue_key(only))  # still lands in the "only" queue
+
+    def test_stories_are_longer(self):
+        text = " ".join(f"Sentence number {n} is here." for n in range(1, 10))
+        with mock.patch.object(museum, "http_json", return_value={"extract": text, "content_urls": {}}):
+            summary, _ = museum.wikipedia_summary("en", "X")
+        self.assertTrue(summary.endswith("number 6 is here."))
+        self.assertLessEqual(len(museum.commons_description("word " * 400)), 601)
 
     def test_candidates_are_checked_without_extmetadata(self):
         answer = {"query": {"pages": [{"title": "File:A.jpg", "pageid": 1,

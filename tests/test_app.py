@@ -86,6 +86,39 @@ class AppTest(unittest.TestCase):
         self.assertEqual((config["fit"], config["caption"], config["notifyOnChange"]), ("wall", "top-left", True))
         self.assertTrue(self.app.wake.is_set())
 
+    def test_language_preference_in_the_menu(self):
+        items = dict((item.text, item) for _, item in flatten(self.app.menu_items()))
+        self.assertTrue(items["Show them first"].checked)
+        self.assertTrue(items["It has a title in my language"].checked)
+        items["Show only them"](self.app.icon)
+        items["It has a Wikipedia article in my language"](self.app.icon)
+        config = core.load_config()
+        self.assertEqual((config["localized"], config["localizedBy"]), ("only", "article"))
+
+    def test_the_card_gear_offers_the_menu_settings(self):
+        core.save_setting("language", "de")
+        data = self.app.card_data()
+        settings = data["settings"]
+        menus = {entry[1]: entry[2] for entry in settings if entry[0] == "menu"}
+        # Same settings, same order and labels as the tray menu.
+        menu_labels = [text for depth, text in self.labels() if depth == 0]
+        self.assertEqual([entry[1] for entry in settings],
+                         [label for label in menu_labels if label in {entry[1] for entry in settings}])
+        language = menus["Sprache"]
+        self.assertIn(("Deutsch", ("set", "language", "de"), True), language)
+        self.assertIn(("Wie Windows", ("set", "language", "auto"), False), language)
+        self.assertIn(("check", "Bei jedem Wechsel benachrichtigen", ("toggle", "notifyOnChange"), False), settings)
+        self.assertEqual(settings[-1], ("command", "Sammlungsordner öffnen", ("open_collection",)))
+        self.app.toggle_setting("notifyOnChange")
+        self.assertTrue(core.load_config()["notifyOnChange"])
+
+    def test_menu_in_every_interface_language(self):
+        for code in core.LANGUAGES[1:]:
+            core.save_setting("language", code)
+            labels = [text for _, text in self.labels()]
+            self.assertIn(app_module.strings.t("next", code), labels, code)
+            self.assertIn(app_module.strings.t("localized", code), labels, code)
+
     def test_menu_in_russian(self):
         core.save_setting("language", "ru")
         labels = [text for _, text in self.labels()]
@@ -176,6 +209,40 @@ class FilterLabelTest(unittest.TestCase):
     def test_label(self):
         self.assertEqual(app_module.filter_label({"artists": [{"id": "Q1", "label": "Monet"}], "yearFrom": 1850}),
                          "Monet, 1850–")
+
+
+
+class CardMenuTest(unittest.TestCase):
+    """The gear's popup menu, built for real where Tk and a display exist (the Windows runner)."""
+
+    def setUp(self):
+        try:
+            import tkinter
+            self.root = tkinter.Tk()
+        except Exception as exc:  # noqa: BLE001 - ImportError, or TclError without a display
+            self.skipTest(f"no Tk here: {exc}")
+        self.root.withdraw()
+        from museum_wallpapers import card
+        self.card = card.Card({})
+        self.card.tk, self.card.root, self.card._window = tkinter, self.root, None
+
+    def tearDown(self):
+        self.card._menu_vars = []
+        self.root.destroy()
+        self.root = None
+        import gc
+        gc.collect()
+
+    def test_settings_menu(self):
+        settings = [("menu", "Language", [("English", ("set", "language", "en"), True),
+                                          ("Deutsch", ("set", "language", "de"), False)]),
+                    ("check", "Notify when it changes", ("toggle", "notifyOnChange"), True),
+                    ("command", "Open collection folder", ("open_collection",))]
+        menu = self.card._build_settings_menu(settings)
+        labels = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1) if menu.type(i) != "separator"]
+        self.assertEqual(labels, ["Language", "Notify when it changes", "Open collection folder"])
+        self.assertEqual([var.get() for var in self.card._menu_vars], [True, False, True])
+        menu.destroy()
 
 
 if __name__ == "__main__":

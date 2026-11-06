@@ -97,10 +97,32 @@ class StringsTest(unittest.TestCase):
         for lang, found in keys.items():
             self.assertEqual(found, keys["en"], lang)
 
+    def test_ten_languages_with_the_same_keys_and_placeholders(self):
+        import string
+        self.assertEqual(set(strings.STRINGS), set(strings.LANGUAGE_NAMES))
+
+        def fields(text):
+            return {name for _, name, _, _ in string.Formatter().parse(text) if name}
+
+        for lang, table in strings.STRINGS.items():
+            for key, text in strings.STRINGS["en"].items():
+                self.assertTrue(table[key], (lang, key))
+                self.assertEqual(fields(table[key]), fields(text), (lang, key))
+
     def test_fallback_to_english(self):
-        self.assertEqual(strings.t("quit", {"language": "de"}), "Quit")
+        # A language without a table: English interface (titles still come in that language).
+        self.assertEqual(strings.t("quit", {"language": "ja"}), "Quit")
+        self.assertEqual(strings.t("quit", {"language": "de"}), "Beenden")
         self.assertEqual(strings.t("quit", {"language": "ru"}), "Выход")
+        self.assertEqual(strings.t("next", "pt-br"), "Próxima pintura")
         self.assertEqual(strings.t("more_by", "en", name="Claude Monet"), "More by Claude Monet")
+        self.assertEqual(strings.t("no_such_key", "de"), "no_such_key")
+        with mock.patch.dict(strings.STRINGS["de"], {"more_by": "Mehr von {nme}"}):
+            self.assertEqual(strings.t("more_by", "de", name="Monet"), "More by Monet")  # a broken translation
+
+    def test_messages_from_the_core_follow_the_language(self):
+        self.assertEqual(strings.t("err_network", "uk", detail="timeout"), "Немає зв’язку з Wikimedia: timeout")
+        self.assertTrue(strings.t("about_artist", "fr").startswith("À propos"))
 
     def test_interval_labels(self):
         self.assertEqual(strings.interval_label(15), "15 minutes")
@@ -108,6 +130,8 @@ class StringsTest(unittest.TestCase):
         self.assertEqual(strings.interval_label(180, "ru"), "3 часа")
         self.assertEqual(strings.interval_label(360, "ru"), "6 часов")
         self.assertEqual(strings.interval_label(0, "ru"), "Только по запросу")
+        self.assertEqual(strings.interval_label(180, "pl"), "3 godziny")
+        self.assertEqual(strings.interval_label(720, "de"), "12 Stunden")
 
     def test_menu_values_are_known(self):
         for minutes in core.INTERVALS:
