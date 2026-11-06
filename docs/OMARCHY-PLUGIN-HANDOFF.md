@@ -1,5 +1,8 @@
 # Handoff: bring the Windows 0.1.2–0.1.3 speed-ups to the Omarchy plugin
 
+**Status: done** — ported in the plugin's 0.1.2 (2026-11-06), with
+improvements of its own that came back to Windows in 0.1.4 (see HANDOFF.md).
+
 Goal (sections 1–8 from 0.1.2, section 9 from 0.1.3): [omarchy-museum-wallpapers](https://github.com/dpsk/omarchy-museum-wallpapers)
 (0.1.1) and this Windows app should behave the same. The Windows app forked
 the plugin's `museum.py` as `src/museum_wallpapers/core.py`; version 0.1.2
