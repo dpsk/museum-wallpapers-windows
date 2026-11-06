@@ -684,11 +684,22 @@ def query_pool(filters):
 
 
 def _load_pool(path, filters):
-    pool = read_json(path)
-    if isinstance(pool, dict) and time.time() - pool.get("at", 0) < POOL_MAX_AGE:
-        return pool["items"]
-    items = query_pool(filters)
-    write_json(path, {"at": time.time(), "items": items}, compact=True)
+    def fresh():
+        pool = read_json(path)
+        if isinstance(pool, dict) and time.time() - pool.get("at", 0) < POOL_MAX_AGE:
+            return pool["items"]
+        return None
+
+    items = fresh()
+    if items is not None:
+        return items
+    # Prefetch threads and an inline Next may all want a new pool: one asks
+    # Wikidata (a ~20 s query), the others read what it wrote.
+    with lock(f"pools/.{path.stem}.lock"):
+        items = fresh()
+        if items is None:
+            items = query_pool(filters)
+            write_json(path, {"at": time.time(), "items": items}, compact=True)
     return items
 
 
@@ -724,11 +735,16 @@ def usable(title, width, height, config, screen):
     return thumb_w >= min(screen[0], MAX_THUMB_WIDTH) * 0.9 and thumb_w / ratio >= screen[1] * 0.85
 
 
+EXTMETADATA = "ObjectName|Artist|DateTimeOriginal|ImageDescription"
+
+
 def image_infos(titles):
+    """Size and page URL of Commons files. Without `extmetadata`: asking for
+    it makes the same request ~20x slower (30 s instead of 1.5 s for 150
+    files), and only the painting finally picked needs it (see describe)."""
     infos = {}
     for batch in chunks(titles, 50):
-        data = mw_api(COMMONS_API, action="query", prop="imageinfo", iiprop="size|url|extmetadata",
-                      iiextmetadatafilter="ObjectName|Artist|DateTimeOriginal|ImageDescription",
+        data = mw_api(COMMONS_API, action="query", prop="imageinfo", iiprop="size|url",
                       titles="|".join(batch))
         # Titles come back normalized; key the result by what was asked for.
         asked = {n["to"]: n["from"] for n in data.get("query", {}).get("normalized", [])}
@@ -866,10 +882,19 @@ def article(entity, language):
     return None
 
 
+def file_metadata(pageid):
+    """Commons' own description of one file (title, artist, date, text)."""
+    data = mw_api(COMMONS_API, action="query", prop="imageinfo", iiprop="extmetadata",
+                  iiextmetadatafilter=EXTMETADATA, pageids=pageid)
+    pages = data.get("query", {}).get("pages", [])
+    info = pages[0].get("imageinfo", [{}])[0] if pages else {}
+    return info.get("extmetadata", {})
+
+
 def describe(page, qid, language):
-    """Everything the plugin shows about a painting."""
+    """Everything the app shows about a painting."""
     image = page["imageinfo"][0]
-    meta = image.get("extmetadata", {})
+    meta = image["extmetadata"] if "extmetadata" in image else file_metadata(page["pageid"])
     languages = "|".join(dict.fromkeys((language, "en")))
     sites = "|".join(f"{lang.replace('-', '_')}wiki" for lang in dict.fromkeys((language, "en")))
     # All languages: a painting labelled only in German still gets its title.
@@ -900,8 +925,8 @@ def describe(page, qid, language):
     info = {
         "id": qid,
         "language": language,
-        "title": label(painting, language) or object_name(meta.get("ObjectName", {}).get("value"))
-        or page["title"][5:],
+        "title": framing.clean_text(label(painting, language)
+                                    or object_name(meta.get("ObjectName", {}).get("value")) or page["title"][5:]),
         "artist": label(artist, language) or plain(meta.get("Artist", {}).get("value"), 80) or "Unknown artist",
         "artistId": creators[0] if creators else None,
         "year": str(year) if year is not None else painting_date(meta.get("DateTimeOriginal", {}).get("value")),
@@ -939,11 +964,23 @@ def _summary(found):
         return "", None
 
 
-def thumb_width(screen_width):
-    """The thumbnail width to ask Commons for: the smallest standard step that
-    fills the screen (wider than the original, Commons serves the original)."""
-    target = min(screen_width, MAX_THUMB_WIDTH) * 0.95
+def thumb_width(screen, ratio=None):
+    """The thumbnail width to ask Commons for: the smallest standard step whose
+    image covers the screen, height included (a 2:1 painting on a 5:4 or a
+    portrait screen needs more width than the screen has). Wider than the
+    original, Commons serves the original. `screen` is (width, height) or a
+    width alone."""
+    width, height = screen if isinstance(screen, tuple) else (screen, 0)
+    needed = max(width, height * ratio) if ratio else width
+    target = min(needed, MAX_THUMB_WIDTH) * 0.95
     return next((step for step in THUMB_STEPS if step >= target), THUMB_STEPS[-1])
+
+
+def thumb_width_for(page):
+    """The thumbnail width that covers every connected monitor."""
+    image = page["imageinfo"][0]
+    ratio = image["width"] / image["height"] if image.get("width") and image.get("height") else None
+    return max(thumb_width((m.width, m.height), ratio) for m in monitors())
 
 
 def claim(name, key, allow_shown=False):
@@ -978,9 +1015,22 @@ def in_flight(key):
         if sidecar.with_suffix(".jpg").exists():
             continue
         data = read_json(sidecar, {})
-        if data.get("filter") == key and (data.get("claimedBy") == os.getpid() or age < IN_FLIGHT_AGE):
+        owner = data.get("claimedBy")
+        if data.get("filter") == key and (owner == os.getpid() or (age < IN_FLIGHT_AGE and alive(owner))):
             count += 1
     return count
+
+
+def alive(pid):
+    """Whether a claiming process still runs (unknown counts as running)."""
+    if not isinstance(pid, int) or pid <= 0:
+        return True
+    if pid == os.getpid():
+        return True
+    try:
+        return PLATFORM.process_alive(pid)
+    except Exception:  # noqa: BLE001 - when in doubt, wait for it
+        return True
 
 
 def enqueue(page, qid, config, key, note=None):
@@ -1000,7 +1050,7 @@ def enqueue(page, qid, config, key, note=None):
         if not info:
             with timed("thumbnail url"):
                 data = mw_api(COMMONS_API, action="query", prop="imageinfo", iiprop="url",
-                              iiurlwidth=thumb_width(screen_size()[0]), pageids=page["pageid"])
+                              iiurlwidth=thumb_width_for(page), pageids=page["pageid"])
             thumb = data["query"]["pages"][0]["imageinfo"][0]
             # Without a rendered thumbnail the original could be hundreds of MB.
             if not thumb.get("thumburl"):
@@ -1126,6 +1176,11 @@ def queued(config):
             continue
         if old and (path.suffix in (".part", ".tmp") or not path.with_suffix(".jpg").exists()):
             _unlink(path)
+        elif path.suffix == ".json" and not path.with_suffix(".jpg").exists():
+            # A claim whose process is gone frees its painting at once.
+            owner = read_json(path, {}).get("claimedBy")
+            if owner != os.getpid() and not alive(owner):
+                _unlink(path)
     return keep[0] if keep else None
 
 
