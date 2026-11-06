@@ -97,6 +97,20 @@ class Platform:
 
     packaged = False
 
+    @staticmethod
+    def process_alive(pid):
+        """Whether a process with this id runs (POSIX: signal 0 probes it).
+        Unknown counts as running."""
+        if sys.platform == "win32":
+            return True  # os.kill(pid, 0) would terminate it there; WindowsPlatform asks the kernel
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except (OSError, OverflowError):
+            return True
+        return True
+
     def launched_at_startup(self):
         """Started automatically at sign-in rather than by the user."""
         return False

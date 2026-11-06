@@ -26,6 +26,9 @@ from .base import Monitor, Platform, largest, language_code
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+STILL_ACTIVE = 259
+ERROR_ACCESS_DENIED = 5
 shell32 = ctypes.WinDLL("shell32")
 ole32 = ctypes.WinDLL("ole32")
 
@@ -81,6 +84,10 @@ kernel32.SetEvent.argtypes = [wintypes.HANDLE]
 kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
 kernel32.WaitForSingleObject.restype = wintypes.DWORD
 kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+kernel32.OpenProcess.restype = wintypes.HANDLE
+kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+kernel32.GetExitCodeProcess.restype = wintypes.BOOL
 kernel32.LCIDToLocaleName.argtypes = [wintypes.DWORD, wintypes.LPWSTR, ctypes.c_int, wintypes.DWORD]
 shell32.SHGetKnownFolderPath.argtypes = [ctypes.POINTER(GUID), wintypes.DWORD, wintypes.HANDLE,
                                          ctypes.POINTER(ctypes.c_void_p)]
@@ -469,6 +476,22 @@ class WindowsPlatform(Platform):
         pythonw = Path(sys.executable).with_name("pythonw.exe")
         runner = pythonw if pythonw.exists() else Path(sys.executable)
         return f'"{runner}" -m museum_wallpapers --background'
+
+    @staticmethod
+    def process_alive(pid):
+        """Whether a process with this id runs. Not os.kill(pid, 0): on
+        Windows that terminates the process."""
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            # No such process; access denied means it exists (another user's).
+            return ctypes.get_last_error() == ERROR_ACCESS_DENIED
+        try:
+            code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True
+            return code.value == STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
 
     def launched_at_startup(self):
         """Started by the package's StartupTask at sign-in (MSIX only; the
