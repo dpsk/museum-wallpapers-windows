@@ -1,7 +1,8 @@
 """The "About this painting" card: a small dark window above the tray with a
 preview, the title, artist, museum, the story, and Next / Read more / Save /
-More by … buttons. Tk runs on its own thread; show() and close() may be
-called from any thread."""
+More by … buttons; settings sit behind a gear (the same list as the tray
+menu). Tk runs on its own thread; show() and close() may be called from any
+thread."""
 
 import gc
 import queue
@@ -22,7 +23,8 @@ ERROR = "#e39a7a"
 
 WIDTH = 420  # at 100% scaling
 PREVIEW_MAX_HEIGHT = 250
-SUMMARY_LIMIT = 700
+# About 14 lines of the story (Wikipedia's first six sentences).
+SUMMARY_LIMIT = 900
 
 
 def shorten(text, limit):
@@ -31,8 +33,8 @@ def shorten(text, limit):
 
 
 class Card:
-    """`actions` maps names (next, open, save, more_by, more_of, show_all) to
-    callables; `work_area` returns (left, top, right, bottom) of the screen
+    """`actions` maps names (next, open, save, more_by, more_of, show_all, and
+    the settings' set, toggle, toggle_autostart, open_collection) to callables; `work_area` returns (left, top, right, bottom) of the screen
     area above the taskbar in physical pixels, or None."""
 
     def __init__(self, actions, work_area=None):
@@ -45,6 +47,8 @@ class Card:
         self._ready = threading.Event()
         self._last = None
         self._close_on_blur = True
+        self._menu_open = False
+        self._menu_vars = []
         self.available = True
 
     # -- thread-safe API
@@ -203,7 +207,7 @@ class Card:
 
     def _on_focus_out(self, event):
         window = self._window
-        if window is None or event.widget is not window or not self._close_on_blur:
+        if window is None or event.widget is not window or not self._close_on_blur or self._menu_open:
             return
         # FocusOut also fires when focus moves to a child; close only when
         # it left the card (checked once Tk has settled the new focus).
@@ -244,8 +248,15 @@ class Card:
         close = tk.Label(top, text="✕", bg=DARK, fg=DIM, font=self.fonts["byline"], cursor="hand2")
         close.pack(side="right")
         close.bind("<Button-1>", self._close)
+        if data.get("settings"):
+            gear = tk.Label(top, text="⚙", bg=DARK, fg=DIM, font=self.fonts["byline"], cursor="hand2")
+            gear.pack(side="right", padx=(0, self._px(12)))
+            gear.bind("<Enter>", lambda _e: gear.configure(fg=TEXT))
+            gear.bind("<Leave>", lambda _e: gear.configure(fg=DIM))
+            gear.bind("<Button-1>", lambda _e: self._settings_menu(gear, data["settings"]))
 
         info = data.get("info")
+        summary = None
         if data.get("preview"):
             photo = self._preview(data["preview"], inner)
             if photo:
@@ -263,9 +274,9 @@ class Card:
                     tk.Label(body, text=text, bg=DARK, fg=color, font=self.fonts[font], justify="left", anchor="w",
                              wraplength=wrap).pack(fill="x", pady=(self._px(2), 0))
             if info.get("summary"):
-                tk.Label(body, text=shorten(info["summary"], SUMMARY_LIMIT), bg=DARK, fg=TEXT,
-                         font=self.fonts["body"], justify="left", anchor="w",
-                         wraplength=wrap).pack(fill="x", pady=(self._px(10), 0))
+                summary = tk.Label(body, text=shorten(info["summary"], SUMMARY_LIMIT), bg=DARK, fg=TEXT,
+                                   font=self.fonts["body"], justify="left", anchor="w", wraplength=wrap)
+                summary.pack(fill="x", pady=(self._px(10), 0))
         else:
             tk.Label(body, text=labels["no_painting"], bg=DARK, fg=SECONDARY, font=self.fonts["body"],
                      justify="left", anchor="w", wraplength=wrap).pack(fill="x")
@@ -296,17 +307,63 @@ class Card:
 
         window.update_idletasks()
         height = window.winfo_reqheight()
+        # A small or scaled screen: shorten the story until the card fits above the taskbar.
+        area = self._area()
+        room, limit = area[3] - area[1] - self._px(24), SUMMARY_LIMIT
+        while summary is not None and height > room and limit > 200:
+            limit -= 150
+            summary.configure(text=shorten(info["summary"], limit))
+            window.update_idletasks()
+            height = window.winfo_reqheight()
         if old_position:
-            area = self._area()
             x, bottom = old_position
             y = min(bottom, area[3] - self._px(12)) - height
         else:
-            area = self._area()
             x, y = area[2] - width - self._px(12), area[3] - height - self._px(12)
         window.geometry(f"{width}x{height}+{max(area[0], x)}+{max(area[1], y)}")
         if focus:
             window.lift()
             window.focus_force()
+
+    def _settings_menu(self, anchor, settings):
+        """The settings as a native popup menu under the gear; the card stays
+        open while it is up and is refreshed by the change."""
+        menu = self._build_settings_menu(settings)
+        self._menu_open = True
+        try:
+            menu.tk_popup(anchor.winfo_rootx(), anchor.winfo_rooty() + anchor.winfo_height())
+        finally:
+            menu.grab_release()
+            self._menu_open = False
+            if self._window is not None:
+                self._window.focus_force()
+
+    def _build_settings_menu(self, settings):
+        tk = self.tk
+        menu = tk.Menu(self._window or self.root, tearoff=0)
+        self._menu_vars = []
+
+        def add(parent, label, action, checked=None):
+            if checked is None:
+                parent.add_command(label=label, command=lambda: self._run(action))
+            else:
+                var = tk.BooleanVar(master=self.root, value=checked)
+                self._menu_vars.append(var)
+                parent.add_checkbutton(label=label, variable=var, command=lambda: self._run(action))
+
+        for entry in settings:
+            kind = entry[0]
+            if kind == "menu":
+                sub = tk.Menu(menu, tearoff=0)
+                for label, action, checked in entry[2]:
+                    add(sub, label, action, checked)
+                menu.add_cascade(label=entry[1], menu=sub)
+            elif kind == "check":
+                add(menu, entry[1], entry[2], entry[3])
+            else:
+                menu.add_separator()
+                add(menu, entry[1], entry[2])
+        return menu
 
     def _area(self):
         if self.work_area:

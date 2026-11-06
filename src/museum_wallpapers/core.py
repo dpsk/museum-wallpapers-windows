@@ -101,6 +101,10 @@ DEFAULTS = {
     "prefetchCount": 6,
     "fit": "blur",
     "fame": "famous",
+    # Paintings with a title (or a Wikipedia article) in the chosen language:
+    # shown first ("prefer"), exclusively ("only"), or no preference ("all").
+    "localized": "prefer",
+    "localizedBy": "title",
     "minRatio": 1.3,
     "maxRatio": 2.0,
 }
@@ -219,6 +223,9 @@ def normalize_config(entry):
         config["fit"] = DEFAULTS["fit"]
     if not isinstance(config["fame"], str) or config["fame"] not in FAME:
         config["fame"] = DEFAULTS["fame"]
+    for key, allowed in (("localized", ("all", "prefer", "only")), ("localizedBy", ("title", "article"))):
+        if not isinstance(config[key], str) or config[key] not in allowed:
+            config[key] = DEFAULTS[key]
     config["filters"] = normalize_filters(config["filters"])
     config["saveDir"] = os.path.realpath(os.path.expanduser(str(config["saveDir"])))
     return config
@@ -306,7 +313,9 @@ def filter_key(filters):
 def queue_key(config):
     """What a queued painting was fetched for: the active filter, the fame
     setting and the language its title and summary are in."""
-    return filter_key({"filters": active_filters(config), "fame": config["fame"], "language": config["language"]})
+    only = [config["localized"], config["localizedBy"]] if config["localized"] == "only" else None
+    return filter_key({"filters": active_filters(config), "fame": config["fame"], "language": config["language"],
+                       "localized": only})
 
 
 def has_entity_filters(filters):
@@ -781,7 +790,7 @@ def random_candidates(filters, config, screen):
 def filtered_candidates(filters, config, screen):
     pool = entity_pool(filters)
     if not pool:
-        raise NoMatch("no paintings match the filter")
+        raise NoMatch(strings.t("nm_no_match", config["language"]))
     sample = random.sample(pool, min(len(pool), POOL_SAMPLE))
     infos = image_infos([title for _, title in sample])
     result = []
@@ -790,7 +799,7 @@ def filtered_candidates(filters, config, screen):
         if page and usable(title, page["imageinfo"][0]["width"], page["imageinfo"][0]["height"], config, screen):
             result.append((page, qid))
     if not result and len(pool) <= POOL_SAMPLE:
-        raise NoMatch(f"none of the {len(pool)} matching paintings is large enough for this screen")
+        raise NoMatch(strings.t("nm_pool_small", config["language"], n=len(pool)))
     return result
 
 
@@ -854,7 +863,7 @@ def commons_description(markup):
     text = without_quickstatements(plain(markup))
     if len(text) < 40:
         return ""
-    return text[:400].rsplit(" ", 1)[0] + "…" if len(text) > 400 else text
+    return text[:600].rsplit(" ", 1)[0] + "…" if len(text) > 600 else text
 
 
 def first_sentences(text, count):
@@ -869,7 +878,7 @@ def wikipedia_summary(language, title):
     data = http_json(url)
     if data.get("type") == "disambiguation":
         return "", None
-    return first_sentences(data.get("extract", ""), 4), data.get("content_urls", {}).get("desktop", {}).get("page")
+    return first_sentences(data.get("extract", ""), 6), data.get("content_urls", {}).get("desktop", {}).get("page")
 
 
 def article(entity, language):
@@ -950,7 +959,7 @@ def describe(page, qid, language):
     if not info["summary"]:
         summary, url = _summary(article(artist, language))
         if summary:
-            info["summary"], info["url"] = "About the artist: " + summary, url or info["url"]
+            info["summary"], info["url"] = strings.t("about_artist", language) + summary, url or info["url"]
     return info
 
 
@@ -1082,6 +1091,41 @@ def enqueue(page, qid, config, key, note=None):
     return dest
 
 
+def described_in(qids, config):
+    """The paintings among `qids` with a title (or, with localizedBy "article",
+    a Wikipedia article) in the chosen language; None if Wikidata cannot say."""
+    language = config["language"]
+    site = f"{language.replace('-', '_')}wiki"
+    try:
+        found = entities(list(qids), props="labels|sitelinks", languages=language, site=site)
+    except Exception as exc:  # noqa: BLE001 - no preference rather than no painting
+        print(f"museum-wallpapers: language check failed: {exc}", file=sys.stderr)
+        return None
+    if not found:
+        return None  # an error answer (no entities at all)
+    if config["localizedBy"] == "article":
+        links = [e.get("sitelinks") or {} for e in found.values()]
+        # A wiki Wikidata does not know (nbwiki, pt_brwiki) is ignored by the
+        # filter, and every sitelink comes back: then it cannot say.
+        if any(set(link) - {site} for link in links):
+            return None
+        return {q for q, e in found.items() if site in (e.get("sitelinks") or {})}
+    return {q for q, e in found.items() if language in (e.get("labels") or {})}
+
+
+def prefer_described(found, config):
+    """Candidates reordered (or, with "only", narrowed) by the language setting."""
+    if config["localized"] == "all" or not found:
+        return found
+    if config["language"] == "en" and config["localized"] == "prefer" and config["localizedBy"] == "title":
+        return found  # nearly every painting has an English title: skip the request
+    described = described_in({qid for _, qid in found}, config)
+    if described is None:
+        return found
+    first = [c for c in found if c[1] in described]
+    return first if config["localized"] == "only" else first + [c for c in found if c[1] not in described]
+
+
 def fetch_next(config, unfiltered=False, note=None):
     """Download one new painting into the queue; returns its image path."""
     filters = active_filters(config)
@@ -1089,9 +1133,13 @@ def fetch_next(config, unfiltered=False, note=None):
     screen = screen_size()
     if unfiltered:
         filters = normalize_filters({})
+        # The fallback shows something: "only" becomes "prefer", rather than
+        # repeating the same search that just found nothing in the language.
+        if config["localized"] == "only":
+            config = {**config, "localized": "prefer"}
     filters, unknown = resolve_filters(filters, config["language"])
     if unknown:
-        raise NoMatch("unknown filter value: " + ", ".join(unknown))
+        raise NoMatch(strings.t("nm_unknown", config["language"], names=", ".join(unknown)))
     # An explicit artist (or "More by …") is shown however famous they are.
     if config["fame"] != "any" and not filters["artists"]:
         filters["fameLevel"] = FAME[config["fame"]]
@@ -1099,7 +1147,7 @@ def fetch_next(config, unfiltered=False, note=None):
             filters["fameArtists"] = famous_painters(filters["fameLevel"])
     QUEUE.mkdir(parents=True, exist_ok=True)
     current = current_painting()
-    repeats, current_matched, queued_matched = [], False, False
+    repeats, current_matched, queued_matched, dropped = [], False, False, 0
     for _ in range(SEARCH_ROUNDS):
         with timed("search"):
             if has_entity_filters(filters):
@@ -1108,6 +1156,9 @@ def fetch_next(config, unfiltered=False, note=None):
             else:
                 found = random_candidates(filters, config, screen)
                 exhaustive = False
+            before = len(found)
+            found = prefer_described(found, config)
+            dropped += before - len(found)
         for page, qid in found:
             name = f"commons-{page['pageid']}"
             state = claim(name, key)
@@ -1135,15 +1186,18 @@ def fetch_next(config, unfiltered=False, note=None):
         dest = enqueue(page, qid, config, key, note)
         if dest:
             return dest
+    language = config["language"]
     if queued_matched:
-        raise AllQueued("every matching painting is already queued")
+        raise AllQueued(strings.t("nm_all_queued", language))
     if current_matched:
-        raise OnlyCurrent("the only matching painting is already showing")
+        raise OnlyCurrent(strings.t("nm_only_current", language))
+    if config["localized"] == "only" and dropped:
+        raise NoMatch(strings.t("nm_localized", language))
     if has_entity_filters(filters):
-        raise NoMatch("no matching painting is large enough for this screen")
+        raise NoMatch(strings.t("nm_too_small", language))
     if filters["yearFrom"] is not None or filters["yearTo"] is not None:
-        raise NoMatch("no painting from these years turned up among random scans")
-    raise NoMatch("no suitable painting found")
+        raise NoMatch(strings.t("nm_years", language))
+    raise NoMatch(strings.t("nm_none", language))
 
 
 def queue_items(config):
@@ -1329,8 +1383,8 @@ def status(config, error=None):
         "info": info_for(painting, config) if ours else None,
         "setAt": state.get("setAt", 0),
         "filter": override,
-        "config": {key: config[key] for key in ("intervalMinutes", "notifyOnChange", "caption", "language", "fit",
-                                                "fame")},
+        "config": {key: config[key] for key in ("intervalMinutes", "notifyOnChange", "caption", "language",
+                                                "languageSetting", "fit", "fame", "localized", "localizedBy")},
         "error": error or state.get("error") or "",
     }
 
@@ -1492,15 +1546,16 @@ def switch(config):
             record_current(config)
             return ""
         except NoMatch as exc:
-            error, error_kind = f"Filter: {exc}; showing a random painting", "filter"
+            error, error_kind = strings.t("err_filter", config["language"], detail=exc), "filter"
             try:
                 image = fetch_next(config, unfiltered=True)
             except NoMatch as inner:
-                error = f"Filter: {exc}; and no other painting either: {inner}"
+                error = strings.t("err_filter_nothing", config["language"], detail=exc, inner=inner)
             except Exception as inner:  # noqa: BLE001 - any failure falls back below
-                error, error_kind = f"Filter: {exc}; and could not reach Wikimedia: {inner}", "network"
+                error, error_kind = strings.t("err_filter_network", config["language"], detail=exc,
+                                              inner=inner), "network"
         except Exception as exc:  # noqa: BLE001 - truncated reads, HTTP errors, bad JSON
-            error, error_kind = f"Could not reach Wikimedia: {exc}", "network"
+            error, error_kind = strings.t("err_network", config["language"], detail=exc), "network"
     report(error, error_kind)
     if not image:
         local_fallback(config, error, error_kind)
@@ -1513,13 +1568,13 @@ def switch(config):
         with timed("show"):
             shown = show(target, config)
     except Exception as exc:  # noqa: BLE001 - OSError, or a COM error from the wallpaper API
-        error, error_kind = f"Could not set the background: {exc}", "background"
+        error, error_kind = strings.t("err_background", config["language"], detail=exc), "background"
         report(error, error_kind)
         record_current(config, error, error_kind)
         return error
     filter_error = read_json(target.with_suffix(".json"), {}).get("filterError")
     if filter_error and not error:
-        error, error_kind = f"Filter: {filter_error}; showing a random painting", "filter"
+        error, error_kind = strings.t("err_filter", config["language"], detail=filter_error), "filter"
         report(error, error_kind)
     record(shown, error, error_kind, original=target, config=config)
     prune(config)

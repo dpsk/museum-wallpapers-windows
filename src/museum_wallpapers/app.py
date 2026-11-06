@@ -58,6 +58,10 @@ class App:
             "more_by": self.more_by,
             "more_of": self.more_of,
             "show_all": self.show_all,
+            "set": self.set_setting,
+            "toggle": self.toggle_setting,
+            "toggle_autostart": self.toggle_autostart,
+            "open_collection": self.open_collection,
         }, work_area=self.platform.work_area)
 
     # -- start and stop
@@ -210,6 +214,9 @@ class App:
         self.refresh()
         self.wake.set()  # re-frame or switch now, not in a minute
 
+    def toggle_setting(self, key):
+        self.set_setting(key, not core.load_config()[key])
+
     def _autostart(self):
         try:
             return self.platform.autostart_enabled()
@@ -252,7 +259,7 @@ class App:
         # The win32 menu bakes in check marks when built, so every setting it shows is part of it.
         signature = (bool(status.get("active")), repr(status.get("filter")), self._autostart(),
                      *(config[key] for key in ("language", "languageSetting", "intervalMinutes", "fame", "fit",
-                                               "caption", "notifyOnChange")))
+                                               "caption", "localized", "localizedBy", "notifyOnChange")))
         with self.menu_lock:
             if signature != self.menu_signature:
                 self.menu_signature = signature
@@ -281,7 +288,52 @@ class App:
         override = status.get("filter")
         if override:
             data["filter"] = strings.t("showing_only", config, name=filter_label(override))
+        data["settings"] = self.card_settings(config)
         return data
+
+    # -- settings: the tray menu and the card's gear show the same list
+
+    def settings_spec(self, config):
+        """The settings, in order: ("choices", label, key, [(value, label)], check_key),
+        ("toggle", label, key), ("autostart", label), ("command", label, action)."""
+        t = lambda key, **values: strings.t(key, config, **values)  # noqa: E731
+        languages = [("auto", t("lang_auto"))] + [(code, strings.LANGUAGE_NAMES[code]) for code in core.LANGUAGES[1:]]
+        spec = [
+            ("choices", t("change_every"), "intervalMinutes",
+             [(m, strings.interval_label(m, config)) for m in core.INTERVALS], "intervalMinutes"),
+            ("choices", t("artists"), "fame", [(f, t(f"fame_{f}")) for f in ("famous", "known", "any")], "fame"),
+            ("choices", t("fit"), "fit", [(f, t(f"fit_{f}")) for f in ("blur", "auto", "wall", "cover")], "fit"),
+            ("choices", t("caption"), "caption",
+             [(c, t(f"caption_{c}")) for c in ("off", "bottom-right", "bottom-left", "top-right", "top-left")],
+             "caption"),
+            ("choices", t("language"), "language", languages, "languageSetting"),
+            ("choices", t("localized"), "localized",
+             [(v, t(f"loc_{v}")) for v in ("prefer", "only", "all")], "localized"),
+            ("choices", t("localized_by"), "localizedBy",
+             [(v, t(f"by_{v}")) for v in ("title", "article")], "localizedBy"),
+            ("toggle", t("notify_on_change"), "notifyOnChange"),
+        ]
+        if self.platform.name == "windows":
+            spec.append(("autostart", t("start_with_windows")))
+        spec.append(("command", t("open_collection"), "open_collection"))
+        return spec
+
+    def card_settings(self, config):
+        """The settings for the card's gear menu, with what is checked now."""
+        items = []
+        for entry in self.settings_spec(config):
+            kind, label = entry[0], entry[1]
+            if kind == "choices":
+                _, _, key, values, check_key = entry
+                items.append(("menu", label, [(text, ("set", key, value), config[check_key] == value)
+                                              for value, text in values]))
+            elif kind == "toggle":
+                items.append(("check", label, ("toggle", entry[2]), bool(config[entry[2]])))
+            elif kind == "autostart":
+                items.append(("check", label, ("toggle_autostart",), self._autostart()))
+            else:
+                items.append(("command", label, (entry[2],)))
+        return items
 
     def menu_items(self):
         pystray = self.pystray
@@ -290,17 +342,9 @@ class App:
         t = lambda key, **values: strings.t(key, config, **values)  # noqa: E731
         has_painting = bool(status.get("active"))
 
-        def choice(key, value, label):
+        def choice(key, value, label, check_key):
             return Item(label, lambda *_: self.set_setting(key, value),
-                        checked=lambda _item: core.load_config().get(key) == value, radio=True)
-
-        language_items = [Item(t("lang_auto"), lambda *_: self.set_setting("language", "auto"),
-                               checked=lambda _i: core.load_config()["languageSetting"] == "auto", radio=True)]
-        for code in core.LANGUAGES[1:]:
-            language_items.append(Item(strings.LANGUAGE_NAMES[code],
-                                       (lambda c: lambda *_: self.set_setting("language", c))(code),
-                                       checked=(lambda c: lambda _i: core.load_config()["languageSetting"] == c)(code),
-                                       radio=True))
+                        checked=lambda _item: core.load_config().get(check_key) == value, radio=True)
 
         items = [
             Item(t("about"), self.about, default=True),
@@ -313,23 +357,20 @@ class App:
         if override:
             items += [Item(t("showing_only", name=filter_label(override)), None, enabled=False),
                       Item(t("show_all"), self.show_all), Menu.SEPARATOR]
+        actions = {"open_collection": self.open_collection}
+        for entry in self.settings_spec(config):
+            kind, label = entry[0], entry[1]
+            if kind == "choices":
+                _, _, key, values, check_key = entry
+                items.append(Item(label, Menu(*[choice(key, value, text, check_key) for value, text in values])))
+            elif kind == "toggle":
+                items.append(Item(label, (lambda k: lambda *_: self.toggle_setting(k))(entry[2]),
+                                  checked=(lambda k: lambda _i: core.load_config()[k])(entry[2])))
+            elif kind == "autostart":
+                items.append(Item(label, self.toggle_autostart, checked=lambda _i: self._autostart()))
+            else:
+                items.append(Item(label, actions[entry[2]]))
         items += [
-            Item(t("change_every"), Menu(*[choice("intervalMinutes", m, strings.interval_label(m, config))
-                                           for m in core.INTERVALS])),
-            Item(t("artists"), Menu(*[choice("fame", f, t(f"fame_{f}")) for f in ("famous", "known", "any")])),
-            Item(t("fit"), Menu(*[choice("fit", f, t(f"fit_{f}")) for f in ("blur", "auto", "wall", "cover")])),
-            Item(t("caption"), Menu(*[choice("caption", c, t(f"caption_{c}"))
-                                      for c in ("off", "bottom-right", "bottom-left", "top-right", "top-left")])),
-            Item(t("language"), Menu(*language_items)),
-            Item(t("notify_on_change"), lambda *_: self.set_setting("notifyOnChange",
-                                                                    not core.load_config()["notifyOnChange"]),
-                 checked=lambda _i: core.load_config()["notifyOnChange"]),
-        ]
-        if self.platform.name == "windows":
-            items.append(Item(t("start_with_windows"), self.toggle_autostart,
-                              checked=lambda _i: self._autostart()))
-        items += [
-            Item(t("open_collection"), self.open_collection),
             Menu.SEPARATOR,
             Item(t("quit"), self.quit),
         ]
