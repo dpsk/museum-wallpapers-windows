@@ -22,6 +22,16 @@ from museum_wallpapers.platforms import Monitor  # noqa: E402
 core.RUNNER = lambda command: None
 
 
+
+def _no_network(url, *args, **kwargs):
+    raise OSError(f"no network in tests: {url}")
+
+
+# Tests never reach Wikimedia: a test that needs an answer patches http_json
+# itself; anything else (the language check of the default "only" setting,
+# say) sees a failed request, as offline.
+core.http_json = _no_network
+
 class FakePlatform(platforms.Platform):
     """Records what the core asks of the OS."""
 

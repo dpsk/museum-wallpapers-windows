@@ -893,8 +893,8 @@ class SwitchTest(unittest.TestCase):
         answer = {"Q1": {"labels": {}, "sitelinks": {}},
                   "Q2": {"labels": {"ru": {"value": "Девятый вал"}}, "sitelinks": {}},
                   "Q3": {"labels": {"ru": {"value": "Гадалка"}}, "sitelinks": {"ruwiki": {"title": "Гадалка"}}}}
-        prefer = museum.normalize_config({"language": "ru", "localized": "prefer"})
-        only = museum.normalize_config({"language": "ru", "localized": "only"})
+        prefer = museum.normalize_config({"language": "ru", "localized": "prefer", "localizedBy": "title"})
+        only = museum.normalize_config({"language": "ru", "localized": "only", "localizedBy": "title"})
         by_article = museum.normalize_config({"language": "ru", "localized": "only", "localizedBy": "article"})
         with mock.patch.object(museum, "entities", return_value=answer) as asked:
             self.assertEqual([q for _, q in museum.prefer_described(found, prefer)], ["Q2", "Q3", "Q1"])
@@ -909,9 +909,9 @@ class SwitchTest(unittest.TestCase):
 
     def test_language_preference_settings(self):
         config = museum.normalize_config({})
-        self.assertEqual((config["localized"], config["localizedBy"]), ("prefer", "title"))
+        self.assertEqual((config["localized"], config["localizedBy"]), ("only", "article"))
         odd = museum.normalize_config({"localized": "never", "localizedBy": 3})
-        self.assertEqual((odd["localized"], odd["localizedBy"]), ("prefer", "title"))
+        self.assertEqual((odd["localized"], odd["localizedBy"]), ("only", "article"))
         self.assertNotEqual(museum.queue_key(museum.normalize_config({"localized": "only"})),
                             museum.queue_key(museum.normalize_config({"localized": "all"})))
         # "prefer" and "all" may queue the same paintings.
@@ -929,7 +929,8 @@ class SwitchTest(unittest.TestCase):
     def test_english_titles_need_no_check(self):
         found = [({"pageid": 1}, "Q1")]
         with mock.patch.object(museum, "described_in", side_effect=AssertionError("asked")):
-            self.assertEqual(museum.prefer_described(found, museum.normalize_config({"language": "en"})), found)
+            english = museum.normalize_config({"language": "en", "localized": "prefer", "localizedBy": "title"})
+            self.assertEqual(museum.prefer_described(found, english), found)
 
     def test_only_blames_the_language_only_when_it_dropped_something(self):
         page = {"pageid": 7, "title": "File:X.jpg", "imageinfo": [{"width": 4000, "height": 2500}]}

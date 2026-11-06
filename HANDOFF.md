@@ -24,6 +24,20 @@ selftest` found every module (comtypes, windows_toasts/winrt, pystray._win32,
 tkinter, PIL.ImageTk) and passed all checks; Inno Setup compiled a 15 MB
 installer.
 
+### 0.1.6 — defaults, two copies
+
+Defaults `localized: only`, `localizedBy: article` (asked for on
+2026-11-06; measured: 2 115 / 3 961 / 850 / 778 of the 38 390 famous
+paintings have a ru / en / de / uk article). Tests block the network in
+`tests/helpers.py` (`core.http_json` raises) since the default now asks
+Wikidata in every search. Two installations: `Platform.other_copy()` (Store
+package: the installer's exe in `%LOCALAPPDATA%\Programs\Museum Wallpapers`;
+installer copy: `%LOCALAPPDATA%\Packages\<STORE_FAMILY>`), `App.two_copies()`
+before the single-instance check. The Store copy cannot uninstall the other
+(HKCU writes from a package are virtualized; a child process runs in the
+package context too), so it only notifies, once a day. The plugin keeps its
+own defaults (prefer/title) unless asked.
+
 ### 0.1.5 — ten languages, language preference (GitHub issue #2)
 
 From the plugin's 0.1.3–0.1.4: `strings.py` has ten tables (the plugin's

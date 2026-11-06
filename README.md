@@ -23,7 +23,9 @@ Website: **[nikaliuk.in](https://nikaliuk.in/)**
 - **Famous painters first.** By default only the ~280 painters covered by 60+
   Wikipedias; widen it to ~1200 or to everyone.
 - **In your language.** Titles and stories from the Wikipedia in your Windows
-  language (or any you pick), paintings described in it shown first; the app
+  language (or any you pick), and by default only paintings with a
+  Wikipedia article in it (2 115 of the famous painters' works in Russian,
+  3 961 in English); the app
   itself speaks English, Russian, Ukrainian, German, French, Spanish,
   Italian, Dutch, Polish and Portuguese.
 
@@ -68,8 +70,8 @@ All of these are in the tray menu; they are stored in
 | `fit` | `"blur"` | Paintings that are not widescreen | `blur` (framed by a blurred copy of itself), `auto` (fill unless that crops more than 10%), `wall` (on a dark wall), `cover` (fill and crop) |
 | `caption` | `"bottom-right"` | Caption on wallpaper | `off`, `bottom-right`, `bottom-left`, `top-right`, `top-left` |
 | `language` | `"auto"` | Language | Wikipedia language for titles and stories, and the interface language; `auto` follows Windows. A language without an interface translation gets an English interface |
-| `localized` | `"prefer"` | Paintings described in my language | `prefer` shows them first, `only` shows only them, `all` has no preference |
-| `localizedBy` | `"title"` | Described means | `title`: Wikidata has the painting's title in your language; `article`: Wikipedia has an article about it |
+| `localized` | `"only"` | Paintings described in my language | `only` shows only them, `prefer` shows them first, `all` has no preference |
+| `localizedBy` | `"article"` | Described means | `article`: Wikipedia has an article about the painting in your language; `title`: Wikidata has its title in your language |
 | `notifyOnChange` | `false` | Notify when it changes | A notification with the painting each time it changes |
 | `saveDir` | `Pictures\Museum Wallpapers` | Open collection folder | Where **Save** puts paintings; also the offline fallback |
 | `prefetchCount` | `6` | | Paintings downloaded (and framed) ahead, so **Next** is instant |

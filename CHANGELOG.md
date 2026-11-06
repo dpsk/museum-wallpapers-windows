@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.6 — 2026-11-06
+
+- By default only paintings with a Wikipedia article in your language are
+  shown (`localized: only`, `localizedBy: article`), so the story under
+  **Read more** is in your language. Of the famous painters' 38 390
+  paintings that leaves 2 115 in Russian, 3 961 in English, 850 in German;
+  the earlier behaviour is one menu click away.
+- Installed both from the Microsoft Store and with the installer from
+  GitHub, the two copies no longer compete at sign-in (the older one could
+  win and run instead): the installer's copy turns its autostart off and
+  hands over to the Store app, and the Store app says once a day how to
+  uninstall the other copy.
+
 ## 0.1.5 — 2026-11-06
 
 From the Omarchy plugin's 0.1.3–0.1.4:

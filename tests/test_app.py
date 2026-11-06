@@ -88,12 +88,37 @@ class AppTest(unittest.TestCase):
 
     def test_language_preference_in_the_menu(self):
         items = dict((item.text, item) for _, item in flatten(self.app.menu_items()))
-        self.assertTrue(items["Show them first"].checked)
-        self.assertTrue(items["It has a title in my language"].checked)
-        items["Show only them"](self.app.icon)
-        items["It has a Wikipedia article in my language"](self.app.icon)
+        # Default: only paintings with a Wikipedia article in my language.
+        self.assertTrue(items["Show only them"].checked)
+        self.assertTrue(items["It has a Wikipedia article in my language"].checked)
+        items["Show them first"](self.app.icon)
+        items["It has a title in my language"](self.app.icon)
         config = core.load_config()
-        self.assertEqual((config["localized"], config["localizedBy"]), ("only", "article"))
+        self.assertEqual((config["localized"], config["localizedBy"]), ("prefer", "title"))
+
+    def test_the_installer_copy_steps_aside_for_the_store_one(self):
+        self.platform.other_copy = lambda: Path("Packages/dpsk.MuseumWallpapers_9n62pad56wkq8")
+        self.platform.set_autostart = mock.Mock(return_value=True)
+        self.platform.launch_store_app = mock.Mock()
+        self.assertTrue(self.app.two_copies())
+        self.platform.set_autostart.assert_called_once_with(False)
+        self.platform.launch_store_app.assert_called_once()
+        self.app.background = True  # started at sign-in: just leave
+        self.platform.launch_store_app.reset_mock()
+        self.assertTrue(self.app.two_copies())
+        self.platform.launch_store_app.assert_not_called()
+
+    def test_the_store_copy_says_how_to_remove_the_other_once_a_day(self):
+        self.platform.packaged = True
+        self.platform.other_copy = lambda: Path("Programs/Museum Wallpapers/MuseumWallpapers.exe")
+        self.assertFalse(self.app.two_copies())
+        self.assertFalse(self.app.two_copies())
+        self.assertEqual(len(self.platform.notifications), 1)
+        title, body, _ = self.platform.notifications[0]
+        self.assertEqual(title, "Two copies of Museum Wallpapers")
+        self.assertIn("unins000.exe", body)
+        self.platform.other_copy = lambda: None
+        self.assertFalse(self.app.two_copies())
 
     def test_the_card_gear_offers_the_menu_settings(self):
         core.save_setting("language", "de")

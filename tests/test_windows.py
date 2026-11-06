@@ -35,6 +35,22 @@ class WindowsHelpersTest(unittest.TestCase):
         self.assertFalse(windows.WindowsPlatform.process_alive(child.pid))
         self.assertFalse(windows.WindowsPlatform.process_alive(999999999))
 
+    def test_other_copy(self):
+        from unittest import mock
+        platform = windows.WindowsPlatform()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"LOCALAPPDATA": tmp}):
+            platform.packaged = False
+            self.assertIsNone(platform.other_copy())
+            store = Path(tmp) / "Packages" / windows.STORE_FAMILY
+            store.mkdir(parents=True)
+            self.assertEqual(platform.other_copy(), store)
+            platform.packaged = True
+            self.assertIsNone(platform.other_copy())
+            exe = Path(tmp) / "Programs" / "Museum Wallpapers" / "MuseumWallpapers.exe"
+            exe.parent.mkdir(parents=True)
+            exe.write_bytes(b"")
+            self.assertEqual(platform.other_copy(), exe)
+
     def test_launch_command(self):
         command = windows.WindowsPlatform.launch_command()
         self.assertTrue(command.endswith("--background"))
