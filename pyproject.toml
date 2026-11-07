@@ -19,6 +19,7 @@ dependencies = [
     "winrt-Windows.ApplicationModel>=3.2,<4; sys_platform == 'win32'",
     "winrt-Windows.ApplicationModel.Activation>=3.2,<4; sys_platform == 'win32'",
     "winrt-Windows.Foundation>=3.2,<4; sys_platform == 'win32'",
+    "winrt-Windows.Services.Store>=3.2,<4; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

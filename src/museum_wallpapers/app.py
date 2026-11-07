@@ -41,6 +41,12 @@ class TimestampedLog:
         self._file.flush()
 
 
+# The Store rating dialog: a week after the first start, at most once
+# answered; a failed attempt waits three days.
+REVIEW_AFTER = 7 * 86400
+REVIEW_RETRY = 3 * 86400
+REVIEW_MIN_CARDS = 5
+
 class App:
     def __init__(self, background=False):
         self.background = background
@@ -97,6 +103,10 @@ class App:
     def run(self):
         if self.two_copies():
             return 0
+        if self.platform.packaged:  # the week before the rating dialog counts from here
+            stamp = core.STATE / "review.json"
+            if not core.read_json(stamp, {}).get("firstRun"):
+                core.write_json(stamp, {**core.read_json(stamp, {}), "firstRun": time.time()})
         # Before anything touches shared files: a second launch only asks
         # the running app to open its card.
         if self.platform.name == "windows":
@@ -205,12 +215,47 @@ class App:
 
     def save(self, *_args):
         self._in_background(lambda: core.cmd_keep(core.load_config(), None))
+        self.maybe_ask_for_review("save")
 
     def about(self, *_args):
         data = self.card_data()
         self.card.show(data)
         if not self.card.available:  # no Tk in this build: a notification instead
             self._in_background(lambda: core.cmd_notify(core.load_config(), None))
+        self.maybe_ask_for_review("card")
+
+    # -- the Store's rating dialog, once, after a week of use
+
+    def maybe_ask_for_review(self, moment):
+        """Ask for a Store rating at a moment of interest: saving a painting,
+        or opening the card for the REVIEW_MIN_CARDS-th time, a week or more
+        after the first start. Once answered (rated or dismissed) never
+        again; after a failure, not before REVIEW_RETRY. Store build only."""
+        if not self.platform.packaged:
+            return False
+        path, now = core.STATE / "review.json", time.time()
+        state = core.read_json(path, {})
+        state.setdefault("firstRun", now)
+        state["cards"] = state.get("cards", 0) + (moment == "card")
+        due = (not state.get("answer") and now - state["firstRun"] >= REVIEW_AFTER
+               and (moment == "save" or state["cards"] >= REVIEW_MIN_CARDS)
+               and now >= state.get("retryAfter", 0))
+        if due:
+            state["retryAfter"] = now + REVIEW_RETRY  # never two dialogs at once
+        core.write_json(path, state)
+        if due:
+            self._in_background(self._ask_for_review)
+        return due
+
+    def _ask_for_review(self):
+        try:
+            answer = self.platform.request_review(getattr(self.icon, "_hwnd", None))
+        except Exception as exc:  # noqa: BLE001 - try again another day
+            print(f"museum-wallpapers: rating dialog failed: {exc}", file=sys.stderr)
+            answer = "retry"
+        if answer in ("done", "declined"):
+            path = core.STATE / "review.json"
+            core.write_json(path, {**core.read_json(path, {}), "answer": answer})
 
     def _filter(self, action, **values):
         args = argparse.Namespace(action=action, artist=None, movement=None, genre=None, years=None, label=None,

@@ -508,6 +508,25 @@ class WindowsPlatform(Platform):
         import subprocess
         subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{STORE_FAMILY}!App"])
 
+    def request_review(self, owner=None):
+        """The Store's own rating dialog (StoreContext.RequestRateAndReviewAppAsync).
+        A desktop app gives it an owner window first (IInitializeWithWindow)."""
+        if not self.packaged:
+            return None
+        from winrt.runtime.interop import initialize_with_window
+        from winrt.windows.services.store import StoreContext, StoreRateAndReviewStatus
+        context = StoreContext.get_default()
+        if owner:
+            initialize_with_window(context, int(owner))
+        result = _await(context.request_rate_and_review_app_async())
+        status = StoreRateAndReviewStatus(result.status)
+        if status == StoreRateAndReviewStatus.SUCCEEDED:
+            return "done"
+        if status == StoreRateAndReviewStatus.CANCELED_BY_USER:
+            return "declined"
+        print(f"museum-wallpapers: rating dialog: {status.name} {result.extended_json_data}", file=sys.stderr)
+        return "retry"
+
     def launched_at_startup(self):
         """Started by the package's StartupTask at sign-in (MSIX only; the
         installer's Run key passes --background instead)."""

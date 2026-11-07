@@ -225,6 +225,11 @@ class PackagingTest(unittest.TestCase):
         self.assertIn(f'STARTUP_TASK_ID = "{task.get("TaskId")}"', windows_py)
         for logo in re.findall(r'(Assets\\[\w.]+\.png)', text):
             self.assertIn(logo.split("\\")[1], resources.MSIX_ASSETS)
+        # Every interface language is declared, so the Store lists them all.
+        declared = {r.get("Language").split("-")[0] for r in root.findall(".//m:Resource", ns)}
+        self.assertEqual(declared, set(strings.STRINGS))
+        family = f'{identity.get("Name")}_'
+        self.assertIn(f'STORE_FAMILY = "{family}', windows_py)
 
     def test_assets(self):
         from PIL import Image

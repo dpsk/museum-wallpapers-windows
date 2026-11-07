@@ -2,6 +2,9 @@
 
 import os
 import tempfile
+import contextlib
+import io
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -119,6 +122,43 @@ class AppTest(unittest.TestCase):
         self.assertIn("unins000.exe", body)
         self.platform.other_copy = lambda: None
         self.assertFalse(self.app.two_copies())
+
+    def test_the_store_rating_dialog_comes_once_after_a_week(self):
+        from unittest import mock
+        self.platform.packaged = True
+        self.platform.request_review = mock.Mock(return_value="declined")
+        self.app._in_background = lambda work: work()
+        week_ago = time.time() - app_module.REVIEW_AFTER - 60
+        stamp = core.STATE / "review.json"
+        core.write_json(stamp, {"firstRun": time.time()})
+        self.assertFalse(self.app.maybe_ask_for_review("save"))  # too early
+        core.write_json(stamp, {"firstRun": week_ago})
+        for _ in range(app_module.REVIEW_MIN_CARDS - 1):
+            self.assertFalse(self.app.maybe_ask_for_review("card"))
+        self.assertTrue(self.app.maybe_ask_for_review("card"))  # the fifth card
+        self.platform.request_review.assert_called_once()
+        self.assertEqual(core.read_json(stamp)["answer"], "declined")
+        self.assertFalse(self.app.maybe_ask_for_review("save"))  # answered: never again
+
+    def test_a_failed_rating_dialog_waits_before_trying_again(self):
+        from unittest import mock
+        self.platform.packaged = True
+        self.platform.request_review = mock.Mock(side_effect=OSError("no Store"))
+        self.app._in_background = lambda work: work()
+        stamp = core.STATE / "review.json"
+        core.write_json(stamp, {"firstRun": time.time() - app_module.REVIEW_AFTER - 60})
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertTrue(self.app.maybe_ask_for_review("save"))
+        self.assertFalse(self.app.maybe_ask_for_review("save"))  # within REVIEW_RETRY
+        self.assertNotIn("answer", core.read_json(stamp))
+        core.write_json(stamp, {**core.read_json(stamp), "retryAfter": 0})
+        self.platform.request_review = mock.Mock(return_value="done")
+        self.assertTrue(self.app.maybe_ask_for_review("save"))
+        self.assertEqual(core.read_json(stamp)["answer"], "done")
+
+    def test_no_rating_dialog_outside_the_store_build(self):
+        self.platform.packaged = False
+        self.assertFalse(self.app.maybe_ask_for_review("save"))
 
     def test_the_card_gear_offers_the_menu_settings(self):
         core.save_setting("language", "de")

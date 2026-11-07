@@ -120,6 +120,11 @@ class Platform:
     def launch_store_app(self):
         """Start the Store copy (the installer's copy hands over to it)."""
 
+    def request_review(self, owner=None):
+        """The Store's rate-and-review dialog (Store build only): "done",
+        "declined", "retry", or None where there is no Store."""
+        return None
+
     def launched_at_startup(self):
         """Started automatically at sign-in rather than by the user."""
         return False

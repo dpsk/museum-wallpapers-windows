@@ -9,3 +9,5 @@ winrt-runtime==3.2.1; sys_platform == "win32"
 winrt-Windows.ApplicationModel==3.2.1; sys_platform == "win32"
 winrt-Windows.ApplicationModel.Activation==3.2.1; sys_platform == "win32"
 winrt-Windows.Foundation==3.2.1; sys_platform == "win32"
+# The Store's rating dialog (Store build)
+winrt-Windows.Services.Store==3.2.1; sys_platform == "win32"
