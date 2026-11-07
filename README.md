@@ -122,6 +122,7 @@ python -m museum_wallpapers             # the tray app (from src/, or after pip 
 python -m museum_wallpapers next        # core commands: tick, next, status, keep, filter …
 python -m museum_wallpapers selftest    # what the build can and cannot do
 python packaging/seed.py                # the built-in painter lists (any OS; build.py runs it)
+python packaging/store_shots.py         # Store screenshots in every language (needs Wikimedia)
 python packaging/build.py               # Windows only: app + self-test + installer + Store .msix
 ```
 

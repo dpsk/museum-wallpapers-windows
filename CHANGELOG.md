@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.7 — 2026-11-07
+
+- The Store version asks once for a rating, through the Store's own dialog:
+  a week or more after the first start, when you save a painting or open
+  the card for the fifth time. Rated or dismissed, it never asks again.
+- The Store package declares all ten interface languages, so the Microsoft
+  Store lists the app (and its page) in each of them.
+- `packaging/store_shots.py` and the `store-shots` workflow render the
+  Store screenshots with the app's own framing and caption, in every
+  listing language.
+
 ## 0.1.6 — 2026-11-06
 
 - By default only paintings with a Wikipedia article in your language are

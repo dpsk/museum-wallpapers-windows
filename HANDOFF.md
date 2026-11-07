@@ -24,6 +24,24 @@ selftest` found every module (comtypes, windows_toasts/winrt, pystray._win32,
 tkinter, PIL.ImageTk) and passed all checks; Inno Setup compiled a 15 MB
 installer.
 
+### 0.1.7 — Store listing in ten languages, rating dialog
+
+`App.maybe_ask_for_review(moment)`: Store build only; `state/review.json`
+holds `firstRun` (stamped at start), the card count, `retryAfter` and the
+`answer`; due a week (`REVIEW_AFTER`) after the first start on Save or the
+fifth card (`REVIEW_MIN_CARDS`), never again once rated or dismissed, three
+days after a failure. `WindowsPlatform.request_review(owner)` calls
+`StoreContext.RequestRateAndReviewAppAsync` after
+`winrt.runtime.interop.initialize_with_window(context, hwnd)` (pystray's
+hidden window; package `winrt-Windows.Services.Store`). The manifest
+declares the ten languages (`<Resources>`; a test keeps them equal to
+`strings.STRINGS`). Store screenshots: the `store-shots` workflow (run by
+hand) renders `packaging/store_shots.py` on Windows — The Ninth Wave, Hunters
+in the Snow, The Birth of Venus at 1920x1080, blur frame, caption from
+Wikidata in each language — and force-pushes them to the `store-shots`
+branch (artifact storage is out of reach of the agent's proxy). Listing
+texts for the ten languages were written for Partner Center on 2026-11-07.
+
 ### 0.1.6 — defaults, two copies
 
 Defaults `localized: only`, `localizedBy: article` (asked for on
