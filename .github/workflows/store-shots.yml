@@ -5,6 +5,9 @@ name: store-shots
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   shots:
     runs-on: windows-latest
@@ -22,3 +25,13 @@ jobs:
           name: store-shots
           path: dist/store-shots
           if-no-files-found: error
+      - name: Publish to the store-shots branch (for tools that cannot reach artifact storage)
+        shell: bash
+        run: |
+          cd dist/store-shots
+          git init -q -b store-shots
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Store screenshots from ${GITHUB_SHA::7}"
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" store-shots
