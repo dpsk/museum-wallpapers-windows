@@ -57,6 +57,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--out", type=Path, default=HERE.parent / "dist" / "store-shots")
     args = parser.parse_args()
+    sys.stdout.reconfigure(encoding="utf-8")  # titles in every script, on a cp1252 console
     fonts = caption_fonts()
     with tempfile.TemporaryDirectory() as tmp:
         for n, (qid, slug) in enumerate(PAINTINGS, 1):
