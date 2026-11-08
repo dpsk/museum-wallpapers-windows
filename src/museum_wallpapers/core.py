@@ -860,10 +860,17 @@ def without_quickstatements(text):
     return re.sub(r'\s*(?:title|label|description) QS:[^,\s]*,(?:[a-z-]+:)?"[^"]*"', "", text).strip()
 
 
+# Labelled fields an uploader typed into the description ("Artist: Wassily
+# Kandinsky Title:Composition 8 Date: July 1923 …"): a data sheet, not a story.
+FIELD_LABEL = re.compile(r"\b(?:artist|author|painter|title|date|medium|technique|dimensions|size|source"
+                         r"|collection|location|museum|photo(?:graph)?(?: taken)?(?: by)?)\s*:", re.I)
+
+
 def commons_description(markup):
-    """The file page's description, when it says more than the title."""
+    """The file page's description, when it says more than the title and
+    isn't just a list of labelled fields."""
     text = without_quickstatements(plain(markup))
-    if len(text) < 40:
+    if len(text) < 40 or len(FIELD_LABEL.findall(text)) >= 2:
         return ""
     return text[:600].rsplit(" ", 1)[0] + "…" if len(text) > 600 else text
 

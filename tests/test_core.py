@@ -160,6 +160,15 @@ class WikidataTest(unittest.TestCase):
         long = "A calm evening over the harbour, with fishing boats returning under a pale yellow sky."
         self.assertEqual(museum.commons_description(long), long)
 
+    def test_commons_description_that_is_a_data_sheet_is_dropped(self):
+        sheet = ("Artist: Wassily Kandinsky Title:Composition 8 Date: July 1923 Oil on canvas "
+                 "Photo taken at the Art Gallery of New South Wales")
+        self.assertEqual(museum.commons_description(sheet), "")
+        # One labelled phrase inside real prose is still prose.
+        prose = ("Painted for the Salon of 1863, the canvas shows the harbour at dawn. "
+                 "Source: the artist's own letters describe the commission at length.")
+        self.assertEqual(museum.commons_description(prose), prose)
+
     def test_label_and_article_fall_back_to_english(self):
         entity = {"labels": {"en": {"value": "The Hay Wain"}}, "sitelinks": {"enwiki": {"title": "The Hay Wain"}}}
         self.assertEqual(museum.label(entity, "ru"), "The Hay Wain")

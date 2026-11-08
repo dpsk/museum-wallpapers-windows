@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- A Commons description that is only labelled fields ("Artist: … Title: …
+  Date: …") no longer shows as the painting's story; the card falls back to
+  the artist's article instead.
+
 ## 0.1.7 — 2026-11-07
 
 - The Store version asks once for a rating, through the Store's own dialog:
