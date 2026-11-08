@@ -11,9 +11,9 @@ tray app you install with one setup file.
 
 Website: **[nikaliuk.in](https://nikaliuk.in/)**
 
-![Shishkin's Rye Fields, Friedrich's Seaside by Moonlight and Bruegel's The Hunters in the Snow in turn as the wallpaper with a museum label in the corner, and the card by the tray showing the title, artist, museum and the painting's story](https://nikaliuk.in/media/demo/windows-en.gif)
+![Shishkin's Rye Fields, Friedrich's Seaside by Moonlight and Bruegel's The Hunters in the Snow in turn as the wallpaper with a museum label in the corner, and the card by the tray showing the title, artist, museum and the painting's story](https://nikaliuk.in/media/demo/windows-en-2.gif)
 
-<sub>The same walk with the interface and captions in Russian: [windows-ru.gif](https://nikaliuk.in/media/demo/windows-ru.gif).</sub>
+<sub>The same walk with the interface and captions in Russian: [windows-ru-2.gif](https://nikaliuk.in/media/demo/windows-ru-2.gif).</sub>
 
 - **Endless and high-resolution.** Tens of thousands of paintings listed on
   Wikidata, shown from their Wikimedia Commons scans: only scans large enough
