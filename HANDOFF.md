@@ -130,8 +130,10 @@ fallback. **To be ported to the Omarchy plugin:**
 - Release flow: bump `VERSION`, CHANGELOG, tag `vX.Y.Z`; upload the release's
   `-store.msix` to a new Partner Center submission (Update → Packages; the
   package version must be higher, revision 0). Only one submission can be in
-  progress: 0.1.2.0 went to certification on 2026-11-04, the next one waits
-  until it is published.
+  progress. 0.1.7.0 is live in the Store (published 2026-11-07), and winget
+  serves the Store package through its msstore source
+  (`winget install 9PLK21LK9KSL -s msstore`), so no separate winget manifest is
+  needed for the Store build.
 - Ideas queued (2026-11-04): an update check (GitHub Releases for the
   installer build — download and run the setup silently; `StoreContext`
   update check for the Store build, which the Store itself updates); a

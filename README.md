@@ -32,7 +32,12 @@ Website: **[nikaliuk.in](https://nikaliuk.in/)**
 ## Install
 
 **Microsoft Store** (recommended): [Museum Wallpapers](https://apps.microsoft.com/detail/9PLK21LK9KSL)
-— installs without warnings and updates itself (live once Microsoft certifies it).
+— installs without warnings and updates itself. The same Store package from a
+terminal (answer Y to the Store terms the first time):
+
+```powershell
+winget install 9PLK21LK9KSL -s msstore
+```
 
 **Or the installer** from
 [Releases](https://github.com/dpsk/museum-wallpapers-windows/releases):
