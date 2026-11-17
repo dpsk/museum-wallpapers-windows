@@ -16,13 +16,15 @@ import gc
 import os
 import sys
 import threading
+import time
+import urllib.parse
 import uuid
 import winreg
 from ctypes import wintypes
 from pathlib import Path
 
 from .. import APP_ID, APP_NAME, AUMID
-from .base import Monitor, Platform, largest, language_code
+from .base import Monitor, Platform, largest, language_code, proxy_address
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -118,6 +120,114 @@ def _package_string(function):
 
 PACKAGE_FAMILY = _package_string("GetCurrentPackageFamilyName")
 PACKAGED_AUMID = _package_string("GetCurrentApplicationUserModelId") if PACKAGE_FAMILY else None
+
+
+# -- proxy: WinHTTP's auto-proxy (WPAD and PAC files), which urllib lacks
+
+winhttp = ctypes.WinDLL("winhttp", use_last_error=True)
+WINHTTP_ACCESS_TYPE_NO_PROXY = 1
+WINHTTP_ACCESS_TYPE_NAMED_PROXY = 3
+WINHTTP_AUTOPROXY_AUTO_DETECT = 0x1
+WINHTTP_AUTOPROXY_CONFIG_URL = 0x2
+WINHTTP_AUTO_DETECT_TYPE_DHCP = 0x1
+WINHTTP_AUTO_DETECT_TYPE_DNS_A = 0x2
+PROXY_FOUND_FOR = 600  # seconds a proxy decision is reused
+PROXY_UNKNOWN_FOR = 1800  # ... and "no WPAD on this network" (slow to repeat), for every host
+PROXY_DETECT_RETRY = 300  # auto-detection failed some other way, for every host
+PROXY_RETRY_AFTER = 60  # the setup script failed, for that host only
+ERROR_WINHTTP_AUTODETECTION_FAILED = 12180
+
+
+class IE_PROXY_CONFIG(ctypes.Structure):
+    _fields_ = [("fAutoDetect", wintypes.BOOL), ("lpszAutoConfigUrl", ctypes.c_void_p),
+                ("lpszProxy", ctypes.c_void_p), ("lpszProxyBypass", ctypes.c_void_p)]
+
+
+class AUTOPROXY_OPTIONS(ctypes.Structure):
+    _fields_ = [("dwFlags", wintypes.DWORD), ("dwAutoDetectFlags", wintypes.DWORD),
+                ("lpszAutoConfigUrl", wintypes.LPCWSTR), ("lpvReserved", ctypes.c_void_p),
+                ("dwReserved", wintypes.DWORD), ("fAutoLogonIfChallenged", wintypes.BOOL)]
+
+
+class PROXY_INFO(ctypes.Structure):
+    _fields_ = [("dwAccessType", wintypes.DWORD), ("lpszProxy", ctypes.c_void_p),
+                ("lpszProxyBypass", ctypes.c_void_p)]
+
+
+winhttp.WinHttpGetIEProxyConfigForCurrentUser.argtypes = [ctypes.POINTER(IE_PROXY_CONFIG)]
+winhttp.WinHttpGetIEProxyConfigForCurrentUser.restype = wintypes.BOOL
+winhttp.WinHttpOpen.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR,
+                                wintypes.DWORD]
+winhttp.WinHttpOpen.restype = ctypes.c_void_p
+winhttp.WinHttpSetTimeouts.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+winhttp.WinHttpSetTimeouts.restype = wintypes.BOOL
+winhttp.WinHttpGetProxyForUrl.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR, ctypes.POINTER(AUTOPROXY_OPTIONS),
+                                          ctypes.POINTER(PROXY_INFO)]
+winhttp.WinHttpGetProxyForUrl.restype = wintypes.BOOL
+winhttp.WinHttpCloseHandle.argtypes = [ctypes.c_void_p]
+winhttp.WinHttpCloseHandle.restype = wintypes.BOOL
+kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
+kernel32.GlobalFree.restype = ctypes.c_void_p
+
+
+def _take(pointer):
+    """A string WinHTTP allocated, freed after reading."""
+    if not pointer:
+        return None
+    try:
+        return ctypes.wstring_at(pointer)
+    finally:
+        kernel32.GlobalFree(pointer)
+
+
+def ie_proxy_config():
+    """The user's proxy settings (Settings > Network > Proxy, or a policy)."""
+    config = IE_PROXY_CONFIG()
+    if not winhttp.WinHttpGetIEProxyConfigForCurrentUser(ctypes.byref(config)):
+        return {"autoDetect": False, "autoConfigUrl": None, "proxy": None, "bypass": None,
+                "error": ctypes.get_last_error()}
+    return {"autoDetect": bool(config.fAutoDetect), "autoConfigUrl": _take(config.lpszAutoConfigUrl),
+            "proxy": _take(config.lpszProxy), "bypass": _take(config.lpszProxyBypass)}
+
+
+_session = None
+_session_lock = threading.Lock()
+last_proxy_error = None  # WinHTTP's error code from the last failed lookup, for selftest
+_lookup = threading.local()  # ... and this thread's, for the cache rules
+
+
+def auto_proxy(url, auto_detect=False, config_url=None):
+    """The proxy WinHTTP's auto-proxy picks for `url` from WPAD
+    (`auto_detect`) or a PAC file (`config_url`): "http://host:port", '' for
+    a direct connection, None when it cannot tell (no PAC file found).
+    Credentials are never sent for the PAC file (fAutoLogonIfChallenged
+    stays off): whoever answers WPAD on a public network could ask for
+    them. With it off, WinHTTP also caches the script and a failed
+    detection across calls (one session for the process)."""
+    global _session, last_proxy_error
+    with _session_lock:
+        if not _session:
+            _session = winhttp.WinHttpOpen("Museum Wallpapers", WINHTTP_ACCESS_TYPE_NO_PROXY, None, None, 0)
+            if not _session:
+                last_proxy_error = _lookup.error = ctypes.get_last_error()
+                return None
+            winhttp.WinHttpSetTimeouts(_session, 10000, 10000, 10000, 10000)
+    options = AUTOPROXY_OPTIONS()
+    if auto_detect:
+        options.dwFlags |= WINHTTP_AUTOPROXY_AUTO_DETECT
+        options.dwAutoDetectFlags = WINHTTP_AUTO_DETECT_TYPE_DHCP | WINHTTP_AUTO_DETECT_TYPE_DNS_A
+    if config_url:
+        options.dwFlags |= WINHTTP_AUTOPROXY_CONFIG_URL
+        options.lpszAutoConfigUrl = config_url
+    info = PROXY_INFO()
+    if not winhttp.WinHttpGetProxyForUrl(_session, url, ctypes.byref(options), ctypes.byref(info)):
+        last_proxy_error = _lookup.error = ctypes.get_last_error()
+        return None
+    proxy = _take(info.lpszProxy)
+    _take(info.lpszProxyBypass)
+    if info.dwAccessType != WINHTTP_ACCESS_TYPE_NAMED_PROXY:
+        return ""
+    return proxy_address(proxy, urllib.parse.urlsplit(url).scheme or "https")
 
 
 def _await(operation):
@@ -262,6 +372,50 @@ class WindowsPlatform(Platform):
         self._toaster = None
         self._toasts = []  # keep shown toasts alive so their callbacks still fire
         self._toast_lock = threading.Lock()
+        self._proxies = {}  # host: (valid until, proxies or None)
+        self._proxy_lock = threading.Lock()
+
+    # -- network
+
+    def proxies(self, url):
+        """With "Automatically detect settings" or "Use setup script" on
+        (WPAD or a PAC file, common on company networks), the proxy Windows
+        itself would use; urllib only reads a fixed proxy and would connect
+        directly, which such networks may refuse. None otherwise, so urllib
+        keeps its own handling of a fixed proxy and its bypass list.
+        Decisions are cached per host; a failed detection (the usual case at
+        home) for every host, so it is not repeated per request."""
+        parts = urllib.parse.urlsplit(url)
+        host = parts.hostname or ""
+        now = time.monotonic()
+        with self._proxy_lock:
+            for key in (host, "*"):
+                cached = self._proxies.get(key)
+                if cached and cached[0] > now:
+                    return cached[1]
+        config = ie_proxy_config()
+        result, key, lifetime = None, "*", PROXY_UNKNOWN_FOR  # no automatic proxy configured
+        if config["autoDetect"] or config["autoConfigUrl"]:
+            # Only the scheme and host: the answer is cached per host, and a
+            # setup script has no business seeing the query.
+            found = auto_proxy(f"{parts.scheme}://{parts.netloc}/", config["autoDetect"], config["autoConfigUrl"])
+            if found is not None:
+                result, key, lifetime = ({"http": found, "https": found} if found else {}), host, PROXY_FOUND_FOR
+            elif config["autoConfigUrl"]:
+                key, lifetime = host, PROXY_RETRY_AFTER  # maybe transient: retry soon, this host only
+            elif getattr(_lookup, "error", None) != ERROR_WINHTTP_AUTODETECTION_FAILED:
+                lifetime = PROXY_DETECT_RETRY
+        with self._proxy_lock:
+            self._proxies[key] = (now + lifetime, result)
+        return result
+
+    def forget_proxy(self, url):
+        """A request failed to connect: decide afresh next time (the laptop
+        may have moved to another network)."""
+        host = urllib.parse.urlsplit(url).hostname or ""
+        with self._proxy_lock:
+            self._proxies.pop(host, None)
+            self._proxies.pop("*", None)
 
     # -- setup and paths
 

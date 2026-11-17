@@ -14,7 +14,7 @@ from pathlib import Path
 
 from . import VERSION
 
-REQUIRED = ["PIL.Image", "PIL.ImageFilter", "pystray", "tkinter", "PIL.ImageTk", "fontTools.ttLib"]
+REQUIRED = ["PIL.Image", "PIL.ImageFilter", "pystray", "tkinter", "PIL.ImageTk", "fontTools.ttLib", "truststore"]
 WINDOWS_REQUIRED = ["comtypes", "windows_toasts", "pystray._win32", "winreg",
                     "winrt.windows.applicationmodel", "winrt.windows.applicationmodel.activation",
                     "winrt.windows.services.store", "winrt.runtime.interop"]
@@ -83,6 +83,33 @@ def run(out=None):
 
     check("framing", frame)
     check("icon", lambda: resources.icon_image(64).size)
+
+    def tls():
+        context = core.tls_context()
+        return f"{type(context).__module__}.{type(context).__name__}"
+
+    check("tls", tls)
+
+    def proxy():
+        start = time.monotonic()
+        found = {"forCommons": core.PLATFORM.proxies(core.COMMONS_API),
+                 "seconds": round(time.monotonic() - start, 2)}
+        module = sys.modules.get(type(core.PLATFORM).__module__)
+        if hasattr(module, "ie_proxy_config"):
+            found["windows"] = module.ie_proxy_config()
+            found["lastError"] = module.last_proxy_error
+        return found
+
+    check("proxy", proxy, required=False)
+
+    def network():
+        # Not required: CI and the test machine may be offline. A failure
+        # here shows the reason the app would report as "Could not reach
+        # Wikimedia" (a certificate, proxy or DNS problem).
+        answer = core.mw_api(core.COMMONS_API, action="query", meta="siteinfo")
+        return answer["query"]["general"]["sitename"]
+
+    check("network", network, required=False)
 
     text = json.dumps(report, ensure_ascii=False, indent=2)
     if out:

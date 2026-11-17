@@ -24,6 +24,37 @@ selftest` found every module (comtypes, windows_toasts/winrt, pystray._win32,
 tkinter, PIL.ImageTk) and passed all checks; Inno Setup compiled a 15 MB
 installer.
 
+### 0.1.8 — proxy from WinHTTP (WPAD/PAC), certificates checked by Windows
+
+Store certification of submission 8 (2026-11-17, only the search keywords
+changed, package 0.1.7.0) failed 10.1.2.10 Functionality on a Surface Laptop
+Go, OS build 26200; the report's screenshot shows "Could not reach
+Wikimedia: <urlopen error [WinError 10061] No connection could be made
+because the target machine actively refused it>". urllib reads only a
+fixed proxy (registry `ProxyServer`, environment) and ignores WPAD and PAC
+files, so on a network that sets its proxy that way it connects directly and
+is refused. That is the likely cause; the screenshot proves only a refused
+connection (a dead fixed proxy, or no route at all, would look the same). `WindowsPlatform.proxies(url)` asks WinHTTP
+(`WinHttpGetIEProxyConfigForCurrentUser`, then `WinHttpGetProxyForUrl` when
+auto-detect or a setup script is on; one WinHTTP session per process,
+`fAutoLogonIfChallenged` off so no credentials go to a WPAD server and
+WinHTTP caches), caching answers per host for 10 min and a failed detection
+for all hosts for 30 min (other auto-detect failures: all hosts, 5 min; a
+failed setup script: that host, 1 min); a
+connection failure drops the cached decision
+(`forget_proxy`). None leaves urllib's own handling of a fixed proxy.
+`selftest`'s `proxy` check reports the settings, the lookup time and
+WinHTTP's last error code. `core.opener(url)` builds openers per thread and proxy; each has a
+`truststore` context (Windows' verifier, which downloads a missing root;
+truststore locks a context for the whole handshake, hence per thread).
+Not handled: a proxy that asks for credentials (407), and a setup script
+behind Windows authentication (auto-logon is off on purpose; WinHTTP error
+12015, the app then connects directly). CI steps: "Follow a
+PAC file" (`packaging/ci_proxy.py`, AutoConfigURL in HKCU, the proxy log
+must show commons.wikimedia.org) and "Reach Wikimedia without its root
+certificates" (re-enables root auto-update, removes ISRG Root X1/X2,
+Root YE/YR, requires plain OpenSSL to fail and the frozen app to connect).
+
 ### 0.1.7 — Store listing in ten languages, rating dialog
 
 `App.maybe_ask_for_review(moment)`: Store build only; `state/review.json`

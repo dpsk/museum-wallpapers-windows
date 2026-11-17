@@ -4,6 +4,7 @@ development and tests on machines that are not Windows."""
 import json
 import locale
 import os
+import re
 import sys
 import webbrowser
 from pathlib import Path
@@ -39,6 +40,25 @@ def language_code(name):
     return windows_names.get(code, "")
 
 
+def proxy_address(text, scheme="https"):
+    """The first proxy in a Windows proxy list for `scheme`, as urllib wants
+    it ("http://host:port"); '' when the list names none. Lists look like
+    "host:port", "a:80;b:80" or "http=a:80;https=b:443"."""
+    plain = None
+    for entry in re.split(r"[;\s]+", text or ""):
+        kind, equals, address = entry.rpartition("=")
+        if not address:
+            continue
+        if equals and kind.lower() == scheme:
+            plain = address
+            break
+        if not equals and plain is None:
+            plain = address
+    if not plain:
+        return ""
+    return plain if "://" in plain else f"http://{plain}"
+
+
 class Platform:
     """Base behaviour; subclasses override what their OS does differently."""
 
@@ -61,6 +81,15 @@ class Platform:
 
     def setup(self):
         """Process-wide setup before any window or monitor query."""
+
+    def proxies(self, url):
+        """Proxies for a request to `url` as urllib's ProxyHandler takes them
+        ({} for a direct connection), or None to leave it to urllib (the
+        environment, or the static proxy in the Windows registry)."""
+        return None
+
+    def forget_proxy(self, url):
+        """A request to `url` could not connect; drop any cached proxy decision."""
 
     def monitors(self):
         return [DEFAULT_MONITOR]

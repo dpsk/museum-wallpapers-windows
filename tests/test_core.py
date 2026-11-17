@@ -7,6 +7,8 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.error
+import urllib.request
 from pathlib import Path
 from unittest import mock
 
@@ -57,6 +59,91 @@ class ConfigTest(unittest.TestCase):
         b = museum.normalize_filters({"artists": ["Q296"]})
         self.assertEqual(museum.filter_key(a), museum.filter_key(b))
         self.assertNotEqual(museum.filter_key(a), museum.filter_key(museum.normalize_filters({})))
+
+
+class NetworkTest(unittest.TestCase):
+    """Wikimedia's certificates go through the system verifier (truststore),
+    and requests through the proxy Windows would use."""
+
+    URL = "https://commons.wikimedia.org/w/api.php"
+
+    def setUp(self):
+        museum._local.__dict__.clear()  # openers are cached per thread
+        # No real proxy lookup (on Windows it would ask WinHTTP).
+        patcher = mock.patch.object(museum.PLATFORM, "proxies", return_value=None, create=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def handler(self, opener, kind):
+        found = [h for h in opener.handlers if isinstance(h, kind)]
+        return found[0] if found else None
+
+    def test_context_is_truststore(self):
+        import truststore
+        self.assertIsInstance(museum.tls_context(), truststore.SSLContext)
+
+    def test_opener_uses_the_context_and_one_per_thread(self):
+        import truststore
+        mine = museum.opener(self.URL)
+        self.assertIs(museum.opener(self.URL), mine)
+        self.assertIsInstance(self.handler(mine, urllib.request.HTTPSHandler)._context, truststore.SSLContext)
+        other = []
+        worker = threading.Thread(target=lambda: other.append(museum.opener(self.URL)))
+        worker.start()
+        worker.join()
+        self.assertIsNot(other[0], mine)
+
+    def test_opener_takes_the_platform_proxy(self):
+        proxies = {"http": "http://proxy.corp:8080", "https": "http://proxy.corp:8080"}
+        with mock.patch.object(museum.PLATFORM, "proxies", return_value=proxies, create=True):
+            handler = self.handler(museum.opener(self.URL), urllib.request.ProxyHandler)
+            self.assertEqual(handler.proxies, proxies)
+        with mock.patch.object(museum.PLATFORM, "proxies", return_value={}, create=True), \
+                mock.patch.dict(os.environ, {"HTTPS_PROXY": "http://env:1"}):
+            # A direct connection that WinHTTP chose overrides the environment:
+            # build_opener then leaves out its default ProxyHandler (and drops
+            # the empty one, which handles nothing).
+            self.assertIsNone(self.handler(museum.opener("https://upload.wikimedia.org/x"),
+                                           urllib.request.ProxyHandler))
+        with mock.patch.dict(os.environ, {"HTTPS_PROXY": "http://env:1"}):
+            # None keeps urllib's own proxy lookup.
+            handler = self.handler(museum.opener("https://www.wikidata.org/w/api.php"), urllib.request.ProxyHandler)
+            self.assertEqual(handler.proxies.get("https"), "http://env:1")
+
+    def test_proxy_lookup_failure_falls_back_to_urllib(self):
+        with mock.patch.object(museum.PLATFORM, "proxies", side_effect=OSError("winhttp"), create=True), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertIsNotNone(museum.opener(self.URL))
+
+    def test_proxy_address(self):
+        from museum_wallpapers.platforms.base import proxy_address
+        self.assertEqual(proxy_address("proxy.corp:8080"), "http://proxy.corp:8080")
+        self.assertEqual(proxy_address("a:80;b:80"), "http://a:80")
+        self.assertEqual(proxy_address("http=a:80;https=b:443"), "http://b:443")
+        self.assertEqual(proxy_address("http=a:80"), "")
+        self.assertEqual(proxy_address("http=a:80", "http"), "http://a:80")
+        self.assertEqual(proxy_address(" a:80  b:80 "), "http://a:80")
+        self.assertEqual(proxy_address(""), "")
+        self.assertEqual(proxy_address(None), "")
+
+    def test_connection_failure_forgets_the_proxy(self):
+        fake = mock.Mock()
+        fake.open.side_effect = urllib.error.URLError(ConnectionRefusedError(10061, "refused"))
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(museum, "opener", return_value=fake), \
+                mock.patch.object(museum.PLATFORM, "forget_proxy", create=True) as forget:
+            with self.assertRaises(urllib.error.URLError):
+                museum.download("https://upload.wikimedia.org/x.jpg", Path(tmp) / "x.jpg")
+        forget.assert_called_once_with("https://upload.wikimedia.org/x.jpg")
+
+    def test_download_goes_through_the_opener(self):
+        fake = mock.Mock()
+        fake.open.return_value = contextlib.nullcontext(io.BytesIO(b"jpeg"))
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(museum, "opener", return_value=fake) as opener:
+            dest = Path(tmp) / "painting.jpg"
+            museum.download("https://upload.wikimedia.org/x.jpg", dest)
+            self.assertEqual(dest.read_bytes(), b"jpeg")
+        opener.assert_called_once_with("https://upload.wikimedia.org/x.jpg")
+        self.assertEqual(fake.open.call_args.args[0].full_url, "https://upload.wikimedia.org/x.jpg")
 
 
 class OverrideTest(unittest.TestCase):

@@ -55,6 +55,96 @@ jobs:
       - name: Build app, self-test it, build installer and Store package
         run: python packaging/build.py
 
+      - name: Follow a PAC file, as on a company network
+        # Microsoft's certification machine reported "Could not reach
+        # Wikimedia: [WinError 10061] ... actively refused"; the likely
+        # cause: urllib only reads a fixed proxy, and a network that sets its
+        # proxy by WPAD or a PAC file refuses a direct connection. The app
+        # now asks WinHTTP (Platform.proxies). Here a PAC file on 127.0.0.1 names a local
+        # proxy; the built app must reach Wikimedia through it.
+        shell: pwsh
+        run: |
+          $log = "$pwd\packaging\build\proxy.log"
+          Remove-Item $log -ErrorAction SilentlyContinue
+          $proxy = Start-Process python -ArgumentList "packaging\ci_proxy.py", "--port", "8899", "--log", "`"$log`"" `
+            -PassThru -NoNewWindow
+          Start-Sleep 2
+          $settings = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+          Set-ItemProperty $settings -Name AutoConfigURL -Value "http://127.0.0.1:8899/proxy.pac"
+          try {
+            $env:MUSEUM_WALLPAPERS_HOME = "$pwd\packaging\build\selftest-pac-home"
+            $report = "$pwd\packaging\build\selftest-pac.json"
+            Start-Process -FilePath dist\MuseumWallpapers\MuseumWallpapers.exe `
+              -ArgumentList "selftest", "--out", "`"$report`"" -Wait | Out-Null
+            $r = Get-Content $report -Raw | ConvertFrom-Json
+            $r.checks.proxy | ConvertTo-Json -Depth 5
+            $r.checks.network | Format-List
+          } finally {
+            Remove-ItemProperty $settings -Name AutoConfigURL -ErrorAction SilentlyContinue
+            Stop-Process -Id $proxy.Id -ErrorAction SilentlyContinue
+          }
+          $tunnelled = if (Test-Path $log) { Get-Content $log } else { @() }
+          "proxy saw: $($tunnelled -join ', ')"
+          if (-not $r.checks.network.ok) { throw "the built app could not reach Wikimedia through the PAC proxy" }
+          if ($tunnelled -notcontains "commons.wikimedia.org") { throw "the built app did not use the proxy the PAC file names" }
+
+      - name: Reach Wikimedia without its root certificates, as on a fresh Windows
+        # Microsoft's certification machine reported "Could not reach
+        # Wikimedia". A clean Windows image may have none of the roots
+        # Wikimedia's Let's Encrypt chain needs (ISRG Root X1, ISRG Root X2,
+        # Root YE) until Windows' own verifier downloads one. Recreate that
+        # here: plain OpenSSL must fail, the built app (core.tls_context)
+        # must still connect. The runner image turns root auto-update off by
+        # policy; a fresh Windows has it on.
+        shell: pwsh
+        run: |
+          Remove-ItemProperty HKLM:\Software\Policies\Microsoft\SystemCertificates\AuthRoot `
+            -Name DisableRootAutoUpdate -ErrorAction SilentlyContinue
+          $pattern = "CN=(ISRG Root X1|ISRG Root X2|Root YE|Root YR),"
+          foreach ($store in "Root", "AuthRoot", "CA") {
+            Get-ChildItem "Cert:\LocalMachine\$store" | Where-Object Subject -Match $pattern | ForEach-Object {
+              "removing $store $($_.Subject) $($_.Thumbprint)"
+              Remove-Item $_.PSPath -ErrorAction SilentlyContinue
+            }
+          }
+          $probe = "$pwd\packaging\build\tls_probe.py"
+          Set-Content $probe -Encoding utf8 -Value @'
+          import socket, ssl, sys
+          host = "commons.wikimedia.org"
+          try:
+              with socket.create_connection((host, 443), timeout=30) as sock:
+                  ssl.create_default_context().wrap_socket(sock, server_hostname=host).close()
+          except ssl.SSLCertVerificationError as exc:
+              print(f"plain OpenSSL: {exc}")
+              sys.exit(2)
+          print("plain OpenSSL: verified")
+          '@
+          python $probe
+          if ($LASTEXITCODE -eq 0) { throw "plain OpenSSL still verifies: this step no longer reproduces a fresh Windows" }
+          if ($LASTEXITCODE -ne 2) { throw "the OpenSSL probe failed for another reason (network?)" }
+          $env:MUSEUM_WALLPAPERS_HOME = "$pwd\packaging\build\selftest-tls-home"
+          $report = "$pwd\packaging\build\selftest-tls.json"
+          foreach ($attempt in 1, 2) {
+            $proc = Start-Process -FilePath dist\MuseumWallpapers\MuseumWallpapers.exe `
+              -ArgumentList "selftest", "--out", "`"$report`"" -Wait -PassThru
+            $r = Get-Content $report -Raw | ConvertFrom-Json
+            if ($r.checks.network.ok) { break }
+            if ($r.checks.network.error -match "CERTIFICATE_VERIFY_FAILED|SSLCertVerificationError") {
+              throw "the built app failed the certificate check: $($r.checks.network.error)"
+            }
+            "::warning::selftest network check, attempt ${attempt}: $($r.checks.network.error)"
+            Start-Sleep 10
+          }
+          $r.checks.tls, $r.checks.network | Format-List
+          $r.checks.proxy | ConvertTo-Json -Depth 5
+          # The runner, like a home PC, has auto-detect on and no WPAD server.
+          if ($r.checks.proxy.value.seconds -gt 5) { "::warning::proxy lookup took $($r.checks.proxy.value.seconds) s" }
+          if ($r.checks.tls.value -ne "truststore._api.SSLContext") { throw "the built app does not verify with truststore" }
+          if (-not $r.checks.network.ok) { throw "the built app could not reach Wikimedia without the cached roots" }
+          Get-ChildItem Cert:\LocalMachine\AuthRoot, Cert:\LocalMachine\Root | Where-Object Subject -Match $pattern |
+            Format-Table PSParentPath, Subject -AutoSize
+          $global:LASTEXITCODE = 0  # the plain OpenSSL failure above is expected
+
       - name: Install the Store package and self-test it with package identity
         # A copy signed with a throwaway certificate for this runner only;
         # the uploaded .msix stays unsigned (the Store signs it).

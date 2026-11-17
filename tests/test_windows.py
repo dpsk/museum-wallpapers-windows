@@ -110,5 +110,92 @@ class WindowsLiveTest(unittest.TestCase):
                     self.platform.set_wallpaper({m.id: before for m in monitors})
 
 
+
+
+@unittest.skipUnless(sys.platform == "win32", "Windows only")
+class ProxyTest(unittest.TestCase):
+    """WinHTTP's auto-proxy with a PAC file, as on a company network."""
+
+    def serve(self, body):
+        import http.server
+        import threading
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                data = body.encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-ns-proxy-autoconfig")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_address[1]}/proxy.pac"
+
+    def test_pac_names_a_proxy(self):
+        pac = self.serve('function FindProxyForURL(url, host) {'
+                         ' return host == "commons.wikimedia.org" ? "PROXY 10.1.2.3:8080; DIRECT" : "DIRECT"; }')
+        self.assertEqual(windows.auto_proxy("https://commons.wikimedia.org/w/api.php", config_url=pac),
+                         "http://10.1.2.3:8080")
+        self.assertEqual(windows.auto_proxy("https://upload.wikimedia.org/x.jpg", config_url=pac), "")
+
+    def test_no_pac_file(self):
+        self.assertIsNone(windows.auto_proxy("https://commons.wikimedia.org/", config_url="http://127.0.0.1:9/none.pac"))
+
+    def platform_with(self, config, answers):
+        from unittest import mock
+        platform = windows.WindowsPlatform()
+        self.enterContext(mock.patch.object(windows, "ie_proxy_config", return_value=config))
+        lookup = self.enterContext(mock.patch.object(windows, "auto_proxy", side_effect=answers))
+        return platform, lookup
+
+    def test_cache_per_host_and_forget(self):
+        config = {"autoDetect": False, "autoConfigUrl": "http://pac/proxy.pac", "proxy": None, "bypass": None}
+        platform, lookup = self.platform_with(config, ["http://p:8080", "", "http://q:8080"])
+        proxied = {"http": "http://p:8080", "https": "http://p:8080"}
+        self.assertEqual(platform.proxies("https://commons.wikimedia.org/w/api.php?x=1"), proxied)
+        self.assertEqual(lookup.call_args.args[0], "https://commons.wikimedia.org/")
+        self.assertEqual(platform.proxies("https://commons.wikimedia.org/other"), proxied)
+        self.assertEqual(platform.proxies("https://upload.wikimedia.org/a.jpg"), {})
+        self.assertEqual(lookup.call_count, 2)
+        platform.forget_proxy("https://commons.wikimedia.org/")
+        self.assertEqual(platform.proxies("https://commons.wikimedia.org/"),
+                         {"http": "http://q:8080", "https": "http://q:8080"})
+        self.assertEqual(platform.proxies("https://upload.wikimedia.org/b.jpg"), {})
+
+    def test_no_wpad_is_remembered_for_every_host(self):
+        config = {"autoDetect": True, "autoConfigUrl": None, "proxy": None, "bypass": None}
+        platform, lookup = self.platform_with(config, [None])
+        windows._lookup.error = windows.ERROR_WINHTTP_AUTODETECTION_FAILED
+        self.addCleanup(vars(windows._lookup).clear)
+        self.assertIsNone(platform.proxies("https://commons.wikimedia.org/"))
+        self.assertIsNone(platform.proxies("https://upload.wikimedia.org/"))
+        self.assertEqual(lookup.call_count, 1)
+
+    def test_other_failure_is_retried_for_that_host_only(self):
+        config = {"autoDetect": False, "autoConfigUrl": "http://pac/proxy.pac", "proxy": None, "bypass": None}
+        platform, lookup = self.platform_with(config, ["http://p:8080", None, "http://p:8080"])
+        self.assertIsNotNone(platform.proxies("https://commons.wikimedia.org/"))
+        self.assertIsNone(platform.proxies("https://upload.wikimedia.org/"))
+        # The failure for upload does not switch commons off.
+        self.assertIsNotNone(platform.proxies("https://commons.wikimedia.org/"))
+        self.assertEqual(lookup.call_count, 2)
+
+    def test_no_automatic_proxy(self):
+        config = {"autoDetect": False, "autoConfigUrl": None, "proxy": "fixed:80", "bypass": None}
+        platform, lookup = self.platform_with(config, [])
+        self.assertIsNone(platform.proxies("https://commons.wikimedia.org/"))
+        lookup.assert_not_called()
+
+    def test_ie_config_reads(self):
+        config = windows.ie_proxy_config()
+        self.assertIn("autoDetect", config)
+
+
 if __name__ == "__main__":
     unittest.main()

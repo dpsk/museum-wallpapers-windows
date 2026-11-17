@@ -32,6 +32,7 @@ import os
 import random
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import threading
@@ -340,6 +341,54 @@ def timed(stage):
 # ----------------------------------------------------------------- network
 
 
+def tls_context():
+    """The TLS context for Wikimedia: certificates are checked by the
+    operating system's own verifier (truststore), not by the OpenSSL bundled
+    with Python. OpenSSL only sees the root certificates already in the
+    Windows store, and a fresh Windows installation carries few of them: it
+    downloads the rest when Windows itself first checks a chain that needs
+    one. Wikimedia's Let's Encrypt chain needs ISRG Root X1, ISRG Root X2 or
+    Root YE; on a clean Windows image none of them may be on disk yet, and
+    OpenSSL alone then fails with CERTIFICATE_VERIFY_FAILED."""
+    try:
+        import truststore
+    except ImportError:
+        return ssl.create_default_context()
+    return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+
+_local = threading.local()
+
+
+def opener(url):
+    """An opener for `url`, through the proxy Windows would use (see
+    Platform.proxies). One set per thread: truststore holds a per-context
+    lock for the whole handshake, so a shared context would let one stalled
+    connection block every other thread's requests."""
+    try:
+        proxies = PLATFORM.proxies(url)
+    except Exception as exc:  # noqa: BLE001 - a proxy lookup must not stop the request
+        print(f"museum-wallpapers: proxy lookup failed: {exc!r}", file=sys.stderr)
+        proxies = None
+    key = None if proxies is None else tuple(sorted(proxies.items()))
+    openers = getattr(_local, "openers", None)
+    if openers is None:
+        openers = _local.openers = {}
+    if key not in openers:
+        handlers = [urllib.request.HTTPSHandler(context=tls_context())]
+        if proxies is not None:
+            handlers.append(urllib.request.ProxyHandler(proxies))
+        openers[key] = urllib.request.build_opener(*handlers)
+    return openers[key]
+
+
+def forget_proxy(url):
+    try:
+        PLATFORM.forget_proxy(url)
+    except Exception:  # noqa: BLE001 - never hide the request's own error
+        pass
+
+
 def http_json(url, params=None, data=None, accept="application/json", timeout=40):
     if params:
         url = f"{url}?{urllib.parse.urlencode(params)}"
@@ -348,7 +397,7 @@ def http_json(url, params=None, data=None, accept="application/json", timeout=40
                                                               "Accept-Encoding": "gzip"})
     for attempt in (1, 2):
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with opener(url).open(request, timeout=timeout) as response:
                 raw = response.read()
                 if response.headers.get("Content-Encoding") == "gzip":
                     raw = gzip.decompress(raw)
@@ -358,6 +407,9 @@ def http_json(url, params=None, data=None, accept="application/json", timeout=40
             if attempt == 2 or exc.code not in (429, 502, 503, 504):
                 raise
             time.sleep(3)
+        except urllib.error.URLError:
+            forget_proxy(url)
+            raise
 
 
 def mw_api(url, **params):
@@ -368,8 +420,13 @@ def download(url, dest):
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     tmp = dest.with_name(f"{dest.name}.{os.getpid()}-{threading.get_ident()}.part")
     try:
-        with urllib.request.urlopen(request, timeout=180) as response, open(tmp, "wb") as out:
-            shutil.copyfileobj(response, out)
+        try:
+            with opener(url).open(request, timeout=180) as response, open(tmp, "wb") as out:
+                shutil.copyfileobj(response, out)
+        except urllib.error.URLError as exc:
+            if not isinstance(exc, urllib.error.HTTPError):
+                forget_proxy(url)
+            raise
         _replace(tmp, dest)
     finally:
         tmp.unlink(missing_ok=True)

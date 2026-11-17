@@ -1,7 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.1.8 — 2026-11-17
 
+- On networks that set their proxy automatically ("Automatically detect
+  settings" or a setup script, common in companies), the app now uses the
+  proxy Windows would use, asking WinHTTP; before, it connected directly.
+  This is the likely cause of the Microsoft Store certification failure of
+  2026-11-17, where the card showed "Could not reach Wikimedia: [WinError
+  10061] ... actively refused it". A proxy that asks for a password is
+  still not supported.
+- Wikimedia's certificates are checked by Windows itself (the `truststore`
+  package) instead of the OpenSSL bundled with Python, which only sees the
+  root certificates already on disk; a fresh Windows may download the one
+  Wikimedia's chain needs only when its own verifier asks for it.
+- `selftest` reports the proxy settings, the TLS verifier and whether
+  Wikimedia is reachable. CI checks that the built app follows a PAC file
+  to a local proxy, and that it connects with Wikimedia's root certificates
+  removed while plain OpenSSL does not.
 - A Commons description that is only labelled fields ("Artist: … Title: …
   Date: …") no longer shows as the painting's story; the card falls back to
   the artist's article instead.
